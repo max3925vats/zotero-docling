@@ -234,6 +234,186 @@ function formatServerErrors(data: ConvertResponse): string {
   return parts.join(" | ") || `status="${data.status ?? "unknown"}"`;
 }
 
+// ---------------------------------------------------------------------------
+//  Talk to docling-serve — sync or async transport
+// ---------------------------------------------------------------------------
+
+type FetchOutcome =
+  | { ok: true; data: ConvertResponse }
+  | { ok: false; message: string };
+
+interface TaskStatusResponse {
+  task_id?: string;
+  task_status?:
+    | "pending"
+    | "started"
+    | "success"
+    | "partial_success"
+    | "failure"
+    | "skipped";
+  task_position?: number | null;
+  error_message?: string | null;
+}
+
+/** Build the response label "HTTP 504 Gateway Timeout" for a Response. */
+function httpLabelOf(r: Response): string {
+  return r.statusText ? `HTTP ${r.status} ${r.statusText}` : `HTTP ${r.status}`;
+}
+
+/** Parse a response as JSON. On non-2xx with no JSON body, return the HTTP label. */
+async function parseConvertResponse(r: Response): Promise<FetchOutcome> {
+  const label = httpLabelOf(r);
+  let data: ConvertResponse = {};
+  let raw = "";
+  try {
+    raw = await r.text();
+    if (raw) data = JSON.parse(raw) as ConvertResponse;
+  } catch {
+    if (!r.ok) return { ok: false, message: label };
+    return {
+      ok: false,
+      message: `Non-JSON response (${label}): ${raw.slice(0, 200)}`,
+    };
+  }
+  if (!r.ok) {
+    const errs = formatServerErrors(data);
+    const hasDetail = errs && !errs.startsWith("status=");
+    return { ok: false, message: hasDetail ? `${label}: ${errs}` : label };
+  }
+  return { ok: true, data };
+}
+
+/** Sync transport: POST + immediate response. */
+async function fetchConvertResultSync(
+  serverUrl: string,
+  form: FormData,
+  api: ReturnType<typeof getWebApis>,
+): Promise<FetchOutcome> {
+  let response: Response;
+  try {
+    response = await api.fetch(`${serverUrl}/v1/convert/file`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (e) {
+    Zotero.debug(`${LOG} sync fetch failed: ${(e as Error).message}`);
+    return { ok: false, message: "Server not reachable" };
+  }
+  return parseConvertResponse(response);
+}
+
+/** Sleep helper. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Async transport: submit job → poll status → fetch result.
+ * Avoids upstream proxy/gateway timeouts on long VLM conversions.
+ */
+async function fetchConvertResultAsync(
+  serverUrl: string,
+  form: FormData,
+  api: ReturnType<typeof getWebApis>,
+): Promise<FetchOutcome> {
+  const pollSec = Math.max(
+    1,
+    Number(getPref("asyncPollIntervalSec") ?? 5) || 5,
+  );
+  const maxWaitSec = Math.max(
+    0,
+    Number(getPref("asyncMaxWaitSec") ?? 1800) || 0,
+  );
+
+  // 1. Submit
+  let submitResp: Response;
+  try {
+    submitResp = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (e) {
+    Zotero.debug(`${LOG} async submit failed: ${(e as Error).message}`);
+    return { ok: false, message: "Server not reachable" };
+  }
+  if (!submitResp.ok) {
+    return { ok: false, message: `Submit ${httpLabelOf(submitResp)}` };
+  }
+  const submitBody = (await submitResp
+    .json()
+    .catch(() => ({}))) as TaskStatusResponse;
+  const taskId = submitBody.task_id;
+  if (!taskId) {
+    return { ok: false, message: "Async submit returned no task_id" };
+  }
+  Zotero.debug(`${LOG} async task submitted id=${taskId}`);
+
+  // 2. Poll until terminal
+  const startMs = Date.now();
+
+  while (true) {
+    if (maxWaitSec > 0 && (Date.now() - startMs) / 1000 > maxWaitSec) {
+      return {
+        ok: false,
+        message: `Async wait exceeded ${maxWaitSec}s (task ${taskId})`,
+      };
+    }
+    await sleep(pollSec * 1000);
+
+    let pollResp: Response;
+    try {
+      pollResp = await api.fetch(`${serverUrl}/v1/status/poll/${taskId}`);
+    } catch (e) {
+      Zotero.debug(`${LOG} async poll failed: ${(e as Error).message}`);
+      // Transient network blip — keep polling until maxWait expires.
+      continue;
+    }
+    if (!pollResp.ok) {
+      return { ok: false, message: `Poll ${httpLabelOf(pollResp)}` };
+    }
+    const status = (await pollResp
+      .json()
+      .catch(() => ({}))) as TaskStatusResponse;
+    const s = status.task_status;
+    if (s === "success" || s === "partial_success") break;
+    if (s === "failure") {
+      return {
+        ok: false,
+        message: status.error_message
+          ? `Async task failed: ${status.error_message}`
+          : "Async task failed",
+      };
+    }
+    if (s === "skipped") {
+      return { ok: false, message: "Async task skipped by server" };
+    }
+    // pending / started / undefined → keep polling
+  }
+
+  // 3. Fetch result
+  let resultResp: Response;
+  try {
+    resultResp = await api.fetch(`${serverUrl}/v1/result/${taskId}`);
+  } catch (e) {
+    Zotero.debug(`${LOG} async result fetch failed: ${(e as Error).message}`);
+    return { ok: false, message: "Server not reachable while fetching result" };
+  }
+  return parseConvertResponse(resultResp);
+}
+
+/** Dispatch to sync or async transport based on the useAsyncEndpoint pref. */
+async function fetchConvertResult(
+  serverUrl: string,
+  form: FormData,
+  api: ReturnType<typeof getWebApis>,
+): Promise<FetchOutcome> {
+  const useAsync = (getPref("useAsyncEndpoint") ?? false) as boolean;
+  Zotero.debug(`${LOG} transport=${useAsync ? "async" : "sync"}`);
+  return useAsync
+    ? fetchConvertResultAsync(serverUrl, form, api)
+    : fetchConvertResultSync(serverUrl, form, api);
+}
+
 /**
  * Convert a single PDF attachment item.
  * Caller is responsible for any UI feedback AND for applying status tags
@@ -300,49 +480,13 @@ export async function convertAttachment(
     return { status: "error", message: (e as Error).message };
   }
 
-  Zotero.debug(`${LOG} POST ${serverUrl}/v1/convert/file file=${filename}`);
-  let response: Response;
-  try {
-    response = await api.fetch(`${serverUrl}/v1/convert/file`, {
-      method: "POST",
-      body: form,
-    });
-  } catch (e) {
-    Zotero.debug(`${LOG} fetch failed: ${(e as Error).message}`);
-    return { status: "error", message: "Server not reachable" };
+  // --- 6. Talk to docling-serve via sync or async transport ---
+  Zotero.debug(`${LOG} send ${serverUrl} file=${filename}`);
+  const outcome = await fetchConvertResult(serverUrl, form, api);
+  if (!outcome.ok) {
+    return { status: "error", message: outcome.message };
   }
-
-  // --- 6. Parse response (server returns JSON even on errors) ---
-  // HTTP 504 / proxy errors typically have plain-text bodies — handle the
-  // non-JSON case gracefully using the HTTP statusText.
-  const httpLabel = response.statusText
-    ? `HTTP ${response.status} ${response.statusText}`
-    : `HTTP ${response.status}`;
-
-  let data: ConvertResponse = {};
-  let rawBody = "";
-  try {
-    rawBody = await response.text();
-    if (rawBody) data = JSON.parse(rawBody) as ConvertResponse;
-  } catch {
-    if (!response.ok) {
-      return { status: "error", message: httpLabel };
-    }
-    return {
-      status: "error",
-      message: `Non-JSON response (${httpLabel}): ${rawBody.slice(0, 200)}`,
-    };
-  }
-
-  if (!response.ok) {
-    // 404 with "preset … is not allowed" is the disallowed-VLM-preset signal.
-    const errs = formatServerErrors(data);
-    const hasDetail = errs && !errs.startsWith("status=");
-    return {
-      status: "error",
-      message: hasDetail ? `${httpLabel}: ${errs}` : httpLabel,
-    };
-  }
+  const data = outcome.data;
 
   const okStatus =
     data.status === "success" || data.status === "partial_success";

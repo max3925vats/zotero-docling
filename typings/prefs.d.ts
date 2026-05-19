@@ -23,6 +23,9 @@ declare namespace _ZoteroTypes {
       "pictureDescriptionPreset": string;
       "ocrLang": string;
       "advancedJson": string;
+      "useAsyncEndpoint": boolean;
+      "asyncPollIntervalSec": number;
+      "asyncMaxWaitSec": number;
     };
   }
 }

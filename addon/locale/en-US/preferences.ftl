@@ -4,7 +4,7 @@ pref-test-connection = Test Connection
 
 pref-behavior-title = Behavior
 pref-auto-convert =
-    .label = Auto-convert new PDF attachments (Phase 2, not yet wired)
+    .label = Auto-convert new PDF attachments on import
 pref-skip-if-exists =
     .label = Skip items that already have a Markdown attachment
 
@@ -39,6 +39,13 @@ pref-do-picture-desc =
     .label = Describe pictures with a VLM (do_picture_description)
 pref-pic-preset = Picture-description preset
 pref-preset-custom = Custom…
+
+pref-async-title = Async transport
+pref-async-help = Submit the job to docling-serve's async endpoint and poll for results. Recommended for long VLM conversions that would otherwise time out an upstream proxy. The sync endpoint is faster for short PDFs.
+pref-use-async =
+    .label = Use the async endpoint (/v1/convert/file/async)
+pref-async-poll = Poll interval (s)
+pref-async-max-wait = Max wait (s, 0 = ∞)
 
 pref-advanced-title = Advanced
 pref-advanced-help = JSON object whose keys are sent as additional form fields to docling-serve. Overrides anything above. Leave empty to disable.

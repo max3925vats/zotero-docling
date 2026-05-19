@@ -197,6 +197,49 @@
   </groupbox>
 
   <!-- ============================================================ -->
+  <!--  Async transport (Phase 4)                                    -->
+  <!-- ============================================================ -->
+  <groupbox>
+    <label><html:h2 data-l10n-id="pref-async-title"></html:h2></label>
+    <description data-l10n-id="pref-async-help"></description>
+    <checkbox
+      id="zotero-docling-use-async"
+      preference="useAsyncEndpoint"
+      data-l10n-id="pref-use-async"
+    />
+    <hbox align="center">
+      <html:label
+        for="zotero-docling-async-poll"
+        data-l10n-id="pref-async-poll"
+        style="min-width: 180px"
+      ></html:label>
+      <html:input
+        type="number"
+        id="zotero-docling-async-poll"
+        preference="asyncPollIntervalSec"
+        min="1"
+        step="1"
+        style="width: 6em"
+      ></html:input>
+    </hbox>
+    <hbox align="center">
+      <html:label
+        for="zotero-docling-async-max-wait"
+        data-l10n-id="pref-async-max-wait"
+        style="min-width: 180px"
+      ></html:label>
+      <html:input
+        type="number"
+        id="zotero-docling-async-max-wait"
+        preference="asyncMaxWaitSec"
+        min="0"
+        step="60"
+        style="width: 6em"
+      ></html:input>
+    </hbox>
+  </groupbox>
+
+  <!-- ============================================================ -->
   <!--  Advanced (Tier 4)                                            -->
   <!-- ============================================================ -->
   <groupbox>

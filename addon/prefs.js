@@ -24,3 +24,9 @@ pref("ocrLang", ""); // comma-separated, e.g. "en,fr,de"
 // Tier 4: advanced — JSON object whose top-level keys are merged into the
 // outgoing form fields. Overrides anything above. Empty string disables.
 pref("advancedJson", "");
+
+// Async transport (Phase 4). Off by default — the sync endpoint is faster
+// for short conversions. Turn on for long VLM jobs that would otherwise 504.
+pref("useAsyncEndpoint", false);
+pref("asyncPollIntervalSec", 5); // poll cadence in seconds (min 1)
+pref("asyncMaxWaitSec", 1800); // 30 min hard cap; 0 = wait indefinitely
