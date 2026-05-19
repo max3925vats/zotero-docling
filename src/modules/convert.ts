@@ -16,6 +16,24 @@ import {
 const LOG = "[zotero-docling]";
 
 /**
+ * Diagnostic logger that emits to BOTH the Browser Toolbox console
+ * (ztoolkit.log) AND Zotero's debug log (Zotero.debug). Lets the user see
+ * diagnostic lines like "transport=async" without opening Help → Debug Output.
+ */
+function log(...args: unknown[]): void {
+  try {
+    ztoolkit.log(LOG, ...args);
+  } catch {
+    /* ztoolkit not yet available */
+  }
+  try {
+    Zotero.debug(`${LOG} ${args.map((a) => String(a)).join(" ")}`);
+  } catch {
+    /* shutting down */
+  }
+}
+
+/**
  * Z9's plugin sandbox exposes some Web APIs as bare globals (e.g. fetch) but
  * not others (e.g. FormData, Blob). Prefer bare globals when present, fall
  * back to a window context when not.
@@ -346,7 +364,7 @@ async function fetchConvertResultAsync(
   if (!taskId) {
     return { ok: false, message: "Async submit returned no task_id" };
   }
-  Zotero.debug(`${LOG} async task submitted id=${taskId}`);
+  log(`async task submitted id=${taskId}`);
 
   // 2. Poll until terminal
   const startMs = Date.now();
@@ -408,7 +426,7 @@ async function fetchConvertResult(
   api: ReturnType<typeof getWebApis>,
 ): Promise<FetchOutcome> {
   const useAsync = (getPref("useAsyncEndpoint") ?? false) as boolean;
-  Zotero.debug(`${LOG} transport=${useAsync ? "async" : "sync"}`);
+  log(`transport=${useAsync ? "async" : "sync"}`);
   return useAsync
     ? fetchConvertResultAsync(serverUrl, form, api)
     : fetchConvertResultSync(serverUrl, form, api);
@@ -481,7 +499,7 @@ export async function convertAttachment(
   }
 
   // --- 6. Talk to docling-serve via sync or async transport ---
-  Zotero.debug(`${LOG} send ${serverUrl} file=${filename}`);
+  log(`send ${serverUrl} file=${filename}`);
   const outcome = await fetchConvertResult(serverUrl, form, api);
   if (!outcome.ok) {
     return { status: "error", message: outcome.message };
