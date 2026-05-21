@@ -93,7 +93,7 @@ Then install the `.xpi` via **Tools → Plugins** as above.
 
 ## Usage
 
-1. **Settings**: open Zotero → **Settings → Zotero Docling**.
+1. **Settings**: open Zotero → **Settings → zotero-docling**.
 2. Verify the server URL (default `http://localhost:5001`) and click **Test
    Connection** — it should turn green.
 3. Right-click a PDF (or parent item) in your library → **Convert with

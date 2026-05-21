@@ -115,7 +115,7 @@ function bindResetButton(win: Window): void {
   btn.addEventListener("command", () => {
     const Services = (globalThis as any).Services;
     const title =
-      "Reset Zotero Docling preferences?"; /* fluent doesn't resolve here */
+      "Reset zotero-docling preferences?"; /* fluent doesn't resolve here */
     const body =
       "This reverts every plugin preference (Server URL, auto-convert, pipeline, VLM preset, output, etc.) to its built-in default. Your Zotero library and existing markdown attachments are not touched.";
     const confirmed = Services?.prompt?.confirm?.(win, title, body) ?? true;
@@ -138,7 +138,7 @@ function bindResetButton(win: Window): void {
     // ProgressWindow toast for confirmation
     try {
       const pw = new Zotero.ProgressWindow({ closeOnClick: true });
-      pw.changeHeadline("Zotero Docling");
+      pw.changeHeadline("zotero-docling");
       pw.addDescription("Preferences reset to defaults");
       pw.show();
       setTimeout(() => {

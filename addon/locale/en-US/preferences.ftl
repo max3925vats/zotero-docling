@@ -63,8 +63,8 @@ pref-advanced-title = Advanced
 pref-advanced-help = JSON object whose keys are sent as additional form fields to docling-serve. Overrides anything above. Leave empty to disable.
 
 pref-reset = Reset to defaults
-pref-reset-help = Reverts every Zotero Docling preference (including Server URL) to its built-in default.
-pref-reset-confirm-title = Reset Zotero Docling preferences?
+pref-reset-help = Reverts every zotero-docling preference (including Server URL) to its built-in default.
+pref-reset-confirm-title = Reset zotero-docling preferences?
 pref-reset-confirm-body = This reverts every plugin preference (Server URL, auto-convert, pipeline, VLM preset, output, etc.) to its built-in default. Your Zotero library and existing markdown attachments are not touched.
 pref-reset-done = Preferences reset to defaults
 
