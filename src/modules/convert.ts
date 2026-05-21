@@ -12,6 +12,8 @@ import {
   getLocalFilePath,
   isConvertiblePdf,
 } from "../utils/zotero";
+import { buildFrontmatter } from "../utils/frontmatter";
+import { withDbLock } from "../utils/dbLock";
 
 const LOG = "[zotero-docling]";
 
@@ -38,7 +40,7 @@ function log(...args: unknown[]): void {
  * not others (e.g. FormData, Blob). Prefer bare globals when present, fall
  * back to a window context when not.
  */
-function getWebApis(): {
+export function getWebApis(): {
   FormData: typeof FormData;
   Blob: typeof Blob;
   fetch: typeof fetch;
@@ -64,6 +66,15 @@ export type ConvertResult =
   | { status: "ok"; attachmentID: number }
   | { status: "skipped"; reason: string }
   | { status: "error"; message: string };
+
+/**
+ * Tracks PDF attachment IDs that have a conversion currently in flight,
+ * across all orchestrators (menu + notifier). If a second convert call
+ * lands for the same item while the first is still running we skip the
+ * duplicate — otherwise docling-serve happily processes both and we end
+ * up with two .md siblings.
+ */
+const inFlightItems = new Set<number>();
 
 /** docling-serve response envelope (subset we read). */
 interface ConvertResponse {
@@ -233,9 +244,11 @@ export async function applyStatusTagsToParents(
     try {
       const parent = Zotero.Items.get(parentID);
       if (!parent) continue;
-      for (const t of ALL_STATUS_TAGS) parent.removeTag(t);
-      parent.addTag(tag, 0);
-      await parent.saveTx();
+      await withDbLock(async () => {
+        for (const t of ALL_STATUS_TAGS) parent.removeTag(t);
+        parent.addTag(tag, 0);
+        await parent.saveTx();
+      });
     } catch (e) {
       Zotero.debug(
         `${LOG} applyStatusTags parent=${parentID} failed (non-fatal): ${(e as Error).message}`,
@@ -320,7 +333,7 @@ async function fetchConvertResultSync(
   return parseConvertResponse(response);
 }
 
-/** Sleep helper. */
+/** Plain sleep — no abort plumbing (see file header note on cancel). */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -337,10 +350,6 @@ async function fetchConvertResultAsync(
   const pollSec = Math.max(
     1,
     Number(getPref("asyncPollIntervalSec") ?? 5) || 5,
-  );
-  const maxWaitSec = Math.max(
-    0,
-    Number(getPref("asyncMaxWaitSec") ?? 1800) || 0,
   );
 
   // 1. Submit
@@ -366,16 +375,10 @@ async function fetchConvertResultAsync(
   }
   log(`async task submitted id=${taskId}`);
 
-  // 2. Poll until terminal
-  const startMs = Date.now();
-
+  // 2. Poll until terminal. No client-side timeout — docling-serve has no
+  // per-task cancel API, so giving up here would just abandon a server task
+  // that keeps running invisibly. See README "Known limitations".
   while (true) {
-    if (maxWaitSec > 0 && (Date.now() - startMs) / 1000 > maxWaitSec) {
-      return {
-        ok: false,
-        message: `Async wait exceeded ${maxWaitSec}s (task ${taskId})`,
-      };
-    }
     await sleep(pollSec * 1000);
 
     let pollResp: Response;
@@ -440,7 +443,27 @@ async function fetchConvertResult(
  */
 export async function convertAttachment(
   item: Zotero.Item,
+  options?: { force?: boolean },
 ): Promise<ConvertResult> {
+  // Dedupe: if a conversion for this exact attachment is already running
+  // somewhere, skip the duplicate rather than queueing a second one.
+  if (inFlightItems.has(item.id)) {
+    return { status: "skipped", reason: "Already converting" };
+  }
+  inFlightItems.add(item.id);
+  try {
+    return await convertAttachmentInner(item, options);
+  } finally {
+    inFlightItems.delete(item.id);
+  }
+}
+
+async function convertAttachmentInner(
+  item: Zotero.Item,
+  options?: { force?: boolean },
+): Promise<ConvertResult> {
+  const force = options?.force ?? false;
+
   // --- 1. Guard checks ---
   if (!(await isConvertiblePdf(item))) {
     return {
@@ -460,8 +483,14 @@ export async function convertAttachment(
   // --- 3. Skip-if-exists ---
   // Match on filename so siblings under the same parent don't shadow each
   // other: paper.pdf only skips if paper.md already exists.
+  // The `force` option bypasses this check entirely — used by the
+  // "Re-convert (replace)" menu so users can intentionally regenerate.
   const skipIfExists = (getPref("skipIfExists") ?? true) as boolean;
-  if (skipIfExists && (await hasMarkdownChild(parentItemID, filename))) {
+  if (
+    !force &&
+    skipIfExists &&
+    (await hasMarkdownChild(parentItemID, filename))
+  ) {
     return { status: "skipped", reason: "Markdown attachment already exists" };
   }
 
@@ -514,16 +543,35 @@ export async function convertAttachment(
       message: `Conversion ${data.status ?? "unknown"}: ${formatServerErrors(data)}`,
     };
   }
-  const markdown = data.document?.md_content;
-  if (typeof markdown !== "string" || markdown.length === 0) {
+  const rawMarkdown = data.document?.md_content;
+  if (typeof rawMarkdown !== "string" || rawMarkdown.length === 0) {
     return { status: "error", message: "Server returned empty md_content" };
   }
 
-  // --- 7. Write markdown to a temp file ---
-  // Use a per-item subdir so the temp file can keep the expected name
-  // (paper.md instead of ABCDEFG1.md). This matters because Zotero's
-  // attachment.attachmentFilename comes from the source file's basename, and
-  // the skipIfExists check matches on that exact name on subsequent runs.
+  // --- 7. Optionally prepend YAML frontmatter built from parent's metadata ---
+  const addFrontmatter = (getPref("addFrontmatter") ?? true) as boolean;
+  const parentItem = Zotero.Items.get(parentItemID);
+  const fm = addFrontmatter ? buildFrontmatter(parentItem ?? null) : "";
+  const markdown = fm ? `${fm}\n${rawMarkdown}` : rawMarkdown;
+
+  // --- 8. Resolve output destinations ---
+  // Two independent sinks: the Zotero attachment (always default on) and an
+  // optional filesystem export folder. If both are disabled the run is a
+  // skipped no-op (user explicitly asked for nothing).
+  const attachToItem = (getPref("attachToItem") ?? true) as boolean;
+  const exportFolder = ((getPref("exportFolderPath") as string) ?? "").trim();
+
+  if (!attachToItem && !exportFolder) {
+    return {
+      status: "skipped",
+      reason: "No output target — enable attachToItem or set exportFolderPath",
+    };
+  }
+
+  // --- 9. Write markdown to a temp file (canonical, then teed to outputs) ---
+  // Per-item subdir keeps the expected filename (paper.md) so the Zotero
+  // attachment's attachmentFilename matches what hasMarkdownChild expects on
+  // subsequent skipIfExists checks.
   const mdName = filename.replace(/\.pdf$/i, ".md");
   const tmpDir = PathUtils.join(PathUtils.tempDir, `zd-${item.key}`);
   const tmpPath = PathUtils.join(tmpDir, mdName);
@@ -538,40 +586,91 @@ export async function convertAttachment(
     };
   }
 
-  // --- 8. Import as a Zotero attachment ---
-  let newAttachment: Zotero.Item;
-  try {
-    newAttachment = await Zotero.Attachments.importFromFile({
-      file: tmpPath,
-      parentItemID,
-      contentType: "text/markdown",
-    });
-  } catch (e) {
-    await IOUtils.remove(tmpDir, { recursive: true }).catch(() => {});
-    return {
-      status: "error",
-      message: `Failed to import attachment: ${(e as Error).message}`,
-    };
+  // --- 10. Import as a Zotero attachment (if enabled) ---
+  // Both the import and the follow-up setField/saveTx go through the global
+  // DB lock — parallel batches (maxConcurrency > 1) otherwise race on
+  // SQLite transactions and intermittently fail.
+  let attachmentID: number | undefined;
+  if (attachToItem) {
+    let newAttachment: Zotero.Item;
+    try {
+      newAttachment = await withDbLock(() =>
+        Zotero.Attachments.importFromFile({
+          file: tmpPath,
+          parentItemID,
+          contentType: "text/markdown",
+        }),
+      );
+    } catch (e) {
+      await IOUtils.remove(tmpDir, { recursive: true }).catch(() => {});
+      return {
+        status: "error",
+        message: `Failed to import attachment: ${(e as Error).message}`,
+      };
+    }
+    try {
+      await withDbLock(async () => {
+        newAttachment.setField("title", mdName);
+        await newAttachment.saveTx();
+      });
+    } catch (e) {
+      Zotero.debug(
+        `${LOG} title set failed (non-fatal): ${(e as Error).message}`,
+      );
+    }
+    attachmentID = newAttachment.id;
   }
 
-  // --- 9. Set a readable title (paper.pdf → paper.md). Filename was already
-  // set correctly by the import (from tmpPath's basename). ---
-  try {
-    newAttachment.setField("title", mdName);
-    await newAttachment.saveTx();
-  } catch (e) {
-    Zotero.debug(
-      `${LOG} title set failed (non-fatal): ${(e as Error).message}`,
-    );
+  // --- 11. Export to filesystem folder (if configured) ---
+  // Naming: citationKey when set on the parent (BBT), else parent's Zotero key.
+  // Two PDFs under one parent will produce the same export filename — last
+  // write wins. Documented in the README.
+  if (exportFolder) {
+    try {
+      await IOUtils.makeDirectory(exportFolder, { ignoreExisting: true });
+      const exportName = `${exportBaseName(parentItem)}.md`;
+      const exportPath = PathUtils.join(exportFolder, exportName);
+      await IOUtils.writeUTF8(exportPath, markdown);
+      log(`exported ${exportPath}`);
+    } catch (e) {
+      // Don't fail the whole conversion if export fails — the Zotero
+      // attachment (if requested) already landed.
+      Zotero.debug(
+        `${LOG} export to folder failed (non-fatal): ${(e as Error).message}`,
+      );
+    }
   }
 
-  // --- 10. Best-effort cleanup of the per-item temp subdir ---
+  // --- 12. Best-effort cleanup of the per-item temp subdir ---
   await IOUtils.remove(tmpDir, { recursive: true }).catch(() => {});
 
   Zotero.debug(
-    `${LOG} ok item=${item.key} attachment=${newAttachment.id} md=${markdown.length}b in ${data.processing_time ?? "?"}s`,
+    `${LOG} ok item=${item.key} md=${markdown.length}b in ${data.processing_time ?? "?"}s`,
   );
-  return { status: "ok", attachmentID: newAttachment.id };
+  return { status: "ok", attachmentID: attachmentID ?? -1 };
+}
+
+/**
+ * Pick the base filename for the export-to-folder output. citationKey wins
+ * (BetterBibTeX populates this) over the raw Zotero key. Returns at least
+ * a usable string — never empty.
+ */
+function exportBaseName(parent: Zotero.Item | null): string {
+  if (!parent) return "unknown";
+  let citationKey = (
+    (parent.getField?.("citationKey") as string | undefined) ?? ""
+  ).trim();
+  if (!citationKey) {
+    const extra = (parent.getField?.("extra") as string | undefined) ?? "";
+    const m = extra.match(/^Citation Key:\s*(\S+)/m);
+    if (m) citationKey = m[1];
+  }
+  // Sanitise — strip filesystem-hostile characters defensively.
+  const safe = (citationKey || parent.key || "unknown").replace(
+    /[\\/:*?"<>|]/g,
+    "_",
+  );
+  return safe;
 }
 
 /**

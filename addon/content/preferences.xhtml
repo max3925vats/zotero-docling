@@ -48,6 +48,61 @@
       preference="skipIfExists"
       data-l10n-id="pref-skip-if-exists"
     />
+    <hbox align="center">
+      <html:label
+        for="zotero-docling-max-concurrency"
+        data-l10n-id="pref-max-concurrency"
+        style="min-width: 180px"
+      ></html:label>
+      <html:input
+        type="number"
+        id="zotero-docling-max-concurrency"
+        preference="maxConcurrency"
+        min="1"
+        max="8"
+        step="1"
+        style="width: 6em"
+      ></html:input>
+    </hbox>
+    <description data-l10n-id="pref-max-concurrency-help"></description>
+    <checkbox
+      id="zotero-docling-notify"
+      preference="notifyOnComplete"
+      data-l10n-id="pref-notify-on-complete"
+    />
+  </groupbox>
+
+  <!-- ============================================================ -->
+  <!--  Output (Phase 5a)                                            -->
+  <!-- ============================================================ -->
+  <groupbox>
+    <label><html:h2 data-l10n-id="pref-output-title"></html:h2></label>
+    <checkbox
+      id="zotero-docling-attach-to-item"
+      preference="attachToItem"
+      data-l10n-id="pref-attach-to-item"
+    />
+    <checkbox
+      id="zotero-docling-add-frontmatter"
+      preference="addFrontmatter"
+      data-l10n-id="pref-add-frontmatter"
+    />
+    <description data-l10n-id="pref-frontmatter-help"></description>
+    <hbox align="center">
+      <html:label
+        for="zotero-docling-export-folder"
+        data-l10n-id="pref-export-folder"
+        style="min-width: 180px"
+      ></html:label>
+      <html:input
+        type="text"
+        id="zotero-docling-export-folder"
+        preference="exportFolderPath"
+        placeholder="/absolute/path/to/markdown/folder"
+        style="flex: 1"
+      ></html:input>
+    </hbox>
+    <description data-l10n-id="pref-export-folder-help"></description>
   </groupbox>
 
   <!-- ============================================================ -->
@@ -222,21 +277,6 @@
         style="width: 6em"
       ></html:input>
     </hbox>
-    <hbox align="center">
-      <html:label
-        for="zotero-docling-async-max-wait"
-        data-l10n-id="pref-async-max-wait"
-        style="min-width: 180px"
-      ></html:label>
-      <html:input
-        type="number"
-        id="zotero-docling-async-max-wait"
-        preference="asyncMaxWaitSec"
-        min="0"
-        step="60"
-        style="width: 6em"
-      ></html:input>
-    </hbox>
   </groupbox>
 
   <!-- ============================================================ -->
@@ -253,6 +293,15 @@
       placeholder='{ "images_scale": 3.0, "pdf_backend": "docling_parse", "page_range": [1, 5] }'
     ></html:textarea>
   </groupbox>
+
+  <!-- Reset to defaults — clears every plugin pref including serverUrl -->
+  <hbox align="center">
+    <button id="zotero-docling-reset" data-l10n-id="pref-reset"></button>
+    <html:label
+      data-l10n-id="pref-reset-help"
+      style="margin-left: 1em; font-style: italic; opacity: 0.7"
+    ></html:label>
+  </hbox>
 
   <!-- Build info -->
   <vbox>

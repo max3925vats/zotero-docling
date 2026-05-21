@@ -7,6 +7,19 @@ pref-auto-convert =
     .label = Auto-convert new PDF attachments on import
 pref-skip-if-exists =
     .label = Skip items that already have a Markdown attachment
+pref-max-concurrency = Parallel conversions
+pref-max-concurrency-help = How many PDFs to convert in parallel within one batch. Default 1 (sequential, safest). Higher values only speed things up when paired with the async endpoint AND a docling-serve started with --workers ≥ 2.
+pref-notify-on-complete =
+    .label = OS notification when a batch finishes (only if Zotero isn't focused)
+
+pref-output-title = Output
+pref-attach-to-item =
+    .label = Attach the .md as a Zotero child attachment (recommended)
+pref-add-frontmatter =
+    .label = Prepend YAML frontmatter with Zotero metadata
+pref-frontmatter-help = Adds title, authors, year, doi, url, zotero_key, citation_key to every .md output as a YAML --- block at the top.
+pref-export-folder = Export folder
+pref-export-folder-help = Absolute path. If set, every converted .md is ALSO written here as "{citationKey || zoteroKey}.md". Leave empty to disable.
 
 pref-conversion-title = Conversion
 pref-pipeline = Pipeline
@@ -45,9 +58,14 @@ pref-async-help = Submit the job to docling-serve's async endpoint and poll for 
 pref-use-async =
     .label = Use the async endpoint (/v1/convert/file/async)
 pref-async-poll = Poll interval (s)
-pref-async-max-wait = Max wait (s, 0 = ∞)
 
 pref-advanced-title = Advanced
 pref-advanced-help = JSON object whose keys are sent as additional form fields to docling-serve. Overrides anything above. Leave empty to disable.
+
+pref-reset = Reset to defaults
+pref-reset-help = Reverts every Zotero Docling preference (including Server URL) to its built-in default.
+pref-reset-confirm-title = Reset Zotero Docling preferences?
+pref-reset-confirm-body = This reverts every plugin preference (Server URL, auto-convert, pipeline, VLM preset, output, etc.) to its built-in default. Your Zotero library and existing markdown attachments are not touched.
+pref-reset-done = Preferences reset to defaults
 
 pref-build-info = { $name } { $version } · built { $time }

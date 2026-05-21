@@ -98,6 +98,37 @@ sections of the prefs UI itself. Hover any field for inline help.
 
 ---
 
+## Known limitations
+
+### No cancel or async timeout for an in-flight conversion
+
+The plugin does not expose a cancel button, and the async-transport poll
+loop has no client-side timeout. This is intentional — docling-serve
+(the upstream server we talk to) currently has **no per-task cancel API**
+and **does not detect client disconnects** during processing, so any
+"give up" mechanism on the client side just orphans a server task that
+keeps running invisibly. Verified on docling-serve 1.18.0:
+
+- The OpenAPI surface exposes no `DELETE` or `cancel` route.
+- The server source contains `# TODO: abort task!` markers but no
+  implementation.
+- Tracking upstream:
+  [docling-project/docling-serve#447 — Cancellation api](https://github.com/docling-project/docling-serve/issues/447)
+  and
+  [#401 — Interrupt Parsing on Disconnected Request](https://github.com/docling-project/docling-serve/issues/401).
+
+Practical consequences:
+
+- Closing the toast or quitting Zotero does **not** stop the server-side
+  conversion. The PDF will continue to be processed in the background until
+  it completes naturally.
+- If you start a long VLM batch and want it to stop, the only way is to
+  restart `docling-serve`.
+- Once the upstream cancel API exists, we'll add a cancel button that
+  actually does what it says.
+
+---
+
 ## Acknowledgments
 
 - The **[Docling team](https://github.com/docling-project)** for shipping

@@ -2,6 +2,7 @@ import { initLocale, getString } from "./utils/locale";
 import { registerMenu, unregisterMenu } from "./modules/menu";
 import { registerNotifier, unregisterNotifier } from "./modules/notifier";
 import { registerPrefsScripts } from "./modules/preferenceScript";
+import { onZoteroBlur, onZoteroFocus } from "./modules/ui";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup(): Promise<void> {
@@ -23,11 +24,23 @@ async function onStartup(): Promise<void> {
   addon.data.initialized = true;
 }
 
-async function onMainWindowLoad(_win: _ZoteroTypes.MainWindow): Promise<void> {
+async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // Fresh ztoolkit per window — the toolkit owns DOM lifetime.
   addon.data.ztoolkit = createZToolkit();
   // (Template had insertFTLIfNeeded("...-mainWindow.ftl") here; we don't ship
   // a mainWindow.ftl, so omitting it avoids "Missing resource" log spam.)
+
+  // Blur/focus listeners drive the managed-progress hide-on-blur behaviour
+  // (the "stop showing the toast when user switches apps" UX). Re-show on
+  // focus brings the latest state back.
+  try {
+    win.addEventListener("blur", () => onZoteroBlur());
+    win.addEventListener("focus", () => onZoteroFocus());
+  } catch (e) {
+    Zotero.debug(
+      `[zotero-docling] focus listeners failed (non-fatal): ${(e as Error).message}`,
+    );
+  }
 }
 
 /**

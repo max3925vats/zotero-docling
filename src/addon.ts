@@ -20,6 +20,11 @@ class Addon {
       rows: Array<{ [dataKey: string]: string }>;
     };
     dialog?: DialogHelper;
+    // True while a convert batch (menu-initiated or notifier-initiated) is
+    // running. Used to soft-block a second batch from starting before the
+    // first finishes — prevents progress-window stomping and ambiguous
+    // status when prefs change mid-flight.
+    batchInFlight?: boolean;
   };
   // Lifecycle hooks
   public hooks: typeof hooks;

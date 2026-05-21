@@ -1,6 +1,8 @@
 // Small helpers around Zotero.Item that the conversion flow needs.
 // Pure logic only — no UI, no fetch, no preferences access.
 
+import { withDbLock } from "./dbLock";
+
 /**
  * True if the parent item already has a markdown child attachment.
  *
@@ -64,6 +66,46 @@ export async function getLocalFilePath(
     return exists ? path : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Find a markdown child attachment whose filename matches the expected
+ * output for a given PDF filename (paper.pdf → paper.md). Returns the item
+ * or null. Case-insensitive on filename.
+ */
+export function findMatchingMdChild(
+  parentItemID: number,
+  pdfFilename: string,
+): Zotero.Item | null {
+  const parent = Zotero.Items.get(parentItemID);
+  if (!parent) return null;
+  const expected = pdfFilename.replace(/\.pdf$/i, ".md").toLowerCase();
+  for (const id of parent.getAttachments()) {
+    const child = Zotero.Items.get(id);
+    if (!child) continue;
+    const fname = (child.attachmentFilename ?? "").toLowerCase();
+    if (fname === expected) return child;
+  }
+  return null;
+}
+
+/**
+ * Delete the matching .md child if present. Used by the "Re-convert
+ * (replace)" path so that a fresh conversion can attach cleanly without
+ * stacking a second .md sibling.
+ */
+export async function removeMatchingMdChild(
+  parentItemID: number,
+  pdfFilename: string,
+): Promise<boolean> {
+  const child = findMatchingMdChild(parentItemID, pdfFilename);
+  if (!child) return false;
+  try {
+    await withDbLock(() => child.eraseTx());
+    return true;
+  } catch {
+    return false;
   }
 }
 
