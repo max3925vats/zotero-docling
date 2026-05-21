@@ -1,0 +1,124 @@
+name: Bug report
+description: Something in the plugin isn't working as expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill in the sections below — they cover the questions we'd otherwise have to ask in follow-ups.
+
+        **Security issues**: don't use this template. Use [Private Vulnerability Reporting](https://github.com/max3925vats/zotero-docling/security/advisories/new) instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I right-click a PDF and choose Convert with Docling, the toast shows ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: I expected a .md attachment to appear under the parent item.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal sequence that produces the bug.
+      placeholder: |
+        1. Open Zotero with `npm start` (or installed .xpi)
+        2. Right-click a PDF attachment
+        3. Click "Convert with Docling"
+        4. ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: Visible in Tools → Plugins.
+      placeholder: e.g. 0.2.1
+    validations:
+      required: true
+
+  - type: input
+    id: zotero-version
+    attributes:
+      label: Zotero version
+      description: Visible in Zotero → About Zotero.
+      placeholder: e.g. 7.0.11 or 9.0.3
+    validations:
+      required: true
+
+  - type: input
+    id: docling-version
+    attributes:
+      label: docling-serve version
+      description: Run `curl http://localhost:5001/version` (or whatever your server URL is).
+      placeholder: e.g. 1.18.0
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport mode
+      description: Settings → Async transport → "Use the async endpoint" checkbox.
+      options:
+        - Sync (default)
+        - Async
+    validations:
+      required: false
+
+  - type: dropdown
+    id: pipeline
+    attributes:
+      label: Pipeline
+      description: Settings → Conversion → Pipeline.
+      options:
+        - Standard
+        - VLM
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste the ~20 lines around the failure from either:
+        - Browser Toolbox console (filter for `[zotero-docling]` or `[Docling/`)
+        - Zotero's debug log (Help → Debug Output Logging → View Output)
+        - docling-serve terminal output
+        For long logs, attach as a file instead of pasting.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else?
+      description: Screenshots, sample PDFs (if shareable), workarounds you've tried.
+    validations:
+      required: false

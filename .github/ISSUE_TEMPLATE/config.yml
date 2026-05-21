@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Zotero general usage questions
+    url: https://forums.zotero.org/
+    about: For questions about Zotero itself (not this plugin), the official Zotero Forums are the best place.
+  - name: Docling / docling-serve issues
+    url: https://github.com/docling-project/docling-serve/issues
+    about: If the bug is in the conversion pipeline itself (Docling can't parse a particular PDF, OCR engine fails, etc.), the upstream docling-serve repo is the right place.
+  - name: Security vulnerabilities
+    url: https://github.com/max3925vats/zotero-docling/security/advisories/new
+    about: Report privately via GitHub Security Advisories. Do NOT open a public issue.
