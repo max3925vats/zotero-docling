@@ -28,6 +28,8 @@ pref-max-concurrency = Parallel conversions
 pref-max-concurrency-help = How many PDFs to convert in parallel within one batch. Default 1 (sequential, safest). Higher values only speed things up when paired with the async endpoint AND a docling-serve started with --workers ≥ 2.
 pref-notify-on-complete =
     .label = OS notification when a batch finishes (only if Zotero isn't focused)
+pref-confirm-reconvert =
+    .label = Confirm before "Re-convert (replace)" deletes existing markdown
 
 pref-output-title = Output
 pref-attach-to-item =

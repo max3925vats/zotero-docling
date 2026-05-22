@@ -42,6 +42,7 @@ export type FluentMessageId =
   | 'pref-auto-convert-help'
   | 'pref-behavior-title'
   | 'pref-build-info'
+  | 'pref-confirm-reconvert'
   | 'pref-conversion-title'
   | 'pref-disclosure-advanced-collapsed'
   | 'pref-disclosure-conversion-collapsed'
