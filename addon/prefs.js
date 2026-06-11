@@ -16,6 +16,10 @@ pref("pipeline", "standard"); // "standard" | "vlm"
 pref("doOcr", true); // do_ocr
 pref("forceOcr", false); // force_ocr
 pref("tableMode", "accurate"); // table_mode: "accurate" | "fast"
+// image_export_mode: false → "embedded" (server default, base64 images
+// inline); true → "placeholder" (each image becomes a tiny <!-- image -->
+// comment, so the .md keeps text and tables only).
+pref("excludeImages", false);
 
 // Tier 2: enrichments
 pref("doFormulaEnrichment", false); // do_formula_enrichment

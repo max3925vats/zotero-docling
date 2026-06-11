@@ -185,6 +185,17 @@ export function buildConvertForm(
   form.append("force_ocr", String(getPref("forceOcr") ?? false));
   form.append("table_mode", String(getPref("tableMode") ?? "accurate"));
 
+  // Markdown image handling. "embedded" (the server default) inlines every
+  // figure as a base64 data URI, which can bloat a paper's .md by tens of
+  // megabytes. excludeImages swaps in "placeholder" — each image becomes a
+  // tiny <!-- image --> comment, leaving text and tables only.
+  form.append(
+    "image_export_mode",
+    ((getPref("excludeImages") ?? false) as boolean)
+      ? "placeholder"
+      : "embedded",
+  );
+
   // --- Tier 2: enrichments ---
   form.append(
     "do_formula_enrichment",

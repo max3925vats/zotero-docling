@@ -1,6 +1,10 @@
 import { expect } from "chai";
 import * as fc from "fast-check";
-import { truncateMiddle, formatDuration } from "../src/utils/format";
+import {
+  truncateMiddle,
+  formatDuration,
+  formatBytes,
+} from "../src/utils/format";
 
 // Style notes for this file (Goldberg testing best practices):
 //   #1.1 — 3-part test names (what / when / expected).
@@ -161,6 +165,45 @@ describe("format helpers #cold", function () {
           const out = formatDuration(n);
           expect(out).to.be.a("string");
           expect(out.length).to.be.greaterThan(0);
+        }),
+      );
+    });
+  });
+
+  describe("formatBytes", function () {
+    // --------- Example-based tests ---------
+
+    it("When the input is zero, undefined, NaN, or negative, then '0 B' is returned", function () {
+      // Arrange & Act & Assert — `0 B` is the documented fallback.
+      expect(formatBytes(0)).to.equal("0 B");
+      expect(formatBytes(undefined)).to.equal("0 B");
+      expect(formatBytes(NaN)).to.equal("0 B");
+      expect(formatBytes(-1024)).to.equal("0 B");
+    });
+
+    it("When the input is below 1024, then whole bytes are shown with no decimal", function () {
+      // Arrange & Act & Assert
+      expect(formatBytes(1)).to.equal("1 B");
+      expect(formatBytes(512)).to.equal("512 B");
+      expect(formatBytes(1023)).to.equal("1023 B");
+    });
+
+    it("When the input crosses a unit boundary, then it is scaled to one decimal in that unit", function () {
+      // Arrange & Act & Assert — the toast-facing cases: KB for small
+      // markdown, MB for a typical base64-bloated paper.
+      expect(formatBytes(1024)).to.equal("1.0 KB");
+      expect(formatBytes(1536)).to.equal("1.5 KB");
+      expect(formatBytes(18 * 1024 * 1024)).to.equal("18.0 MB");
+      expect(formatBytes(2.5 * 1024 * 1024 * 1024)).to.equal("2.5 GB");
+    });
+
+    // --------- Property-based tests (fast-check) ---------
+
+    it("Property: For any finite input, the result is a non-empty string ending in a known unit", function () {
+      fc.assert(
+        fc.property(fc.double({ min: -1e15, max: 1e15, noNaN: true }), (n) => {
+          const out = formatBytes(n);
+          expect(out).to.match(/^\d+(\.\d)? (B|KB|MB|GB|TB)$/);
         }),
       );
     });

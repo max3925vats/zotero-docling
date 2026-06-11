@@ -11,6 +11,7 @@ const TOUCHED_KEYS = [
   "doOcr",
   "forceOcr",
   "tableMode",
+  "excludeImages",
   "doFormulaEnrichment",
   "doCodeEnrichment",
   "doChartExtraction",
@@ -35,6 +36,7 @@ function defaultPrefs(): void {
   setPref("doOcr", true);
   setPref("forceOcr", false);
   setPref("tableMode", "accurate");
+  setPref("excludeImages", false);
   setPref("doFormulaEnrichment", false);
   setPref("doCodeEnrichment", false);
   setPref("doChartExtraction", false);
@@ -80,9 +82,23 @@ describe("buildConvertForm", function () {
     assert.strictEqual(form.get("do_ocr"), "true");
     assert.strictEqual(form.get("force_ocr"), "false");
     assert.strictEqual(form.get("table_mode"), "accurate");
+    assert.strictEqual(form.get("image_export_mode"), "embedded");
     assert.strictEqual(form.get("do_picture_description"), "false");
     // Picture-description preset is suppressed when doPictureDescription is off.
     assert.isNull(form.get("picture_description_preset"));
+  });
+
+  it("excludeImages switches image_export_mode to placeholder", function () {
+    setPref("excludeImages", true);
+    const form = buildConvertForm(bytes, "p.pdf", getApi());
+    assert.strictEqual(form.get("image_export_mode"), "placeholder");
+  });
+
+  it("advancedJson image_export_mode beats the excludeImages checkbox", function () {
+    setPref("excludeImages", true);
+    setPref("advancedJson", '{"image_export_mode": "referenced"}');
+    const form = buildConvertForm(bytes, "p.pdf", getApi());
+    assert.deepStrictEqual(form.getAll("image_export_mode"), ["referenced"]);
   });
 
   it("emits ocr_lang as repeated fields, not comma-joined", function () {

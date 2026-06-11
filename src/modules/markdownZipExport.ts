@@ -201,48 +201,34 @@ function promptMissingMd(missing: number, total: number): MissingMdChoice {
 }
 
 // ---------------------------------------------------------------------------
-//  Native file-save dialog (nsIFilePicker)
+//  Native file-save dialog
 // ---------------------------------------------------------------------------
 
 /**
  * Show a Save As dialog and return the chosen absolute path, or null if
  * the user cancelled.
+ *
+ * Goes through Zotero's FilePicker module (via the toolkit helper) rather
+ * than raw nsIFilePicker: Firefox 128+ (Zotero 8) requires a
+ * BrowsingContext as the first argument to nsIFilePicker.init, and
+ * Zotero's wrapper absorbs that difference across supported versions.
  */
 async function promptSavePath(defaultName: string): Promise<string | null> {
-  const Cc = (globalThis as any).Components?.classes;
-  const Ci = (globalThis as any).Components?.interfaces;
-  if (!Cc || !Ci || !Ci.nsIFilePicker) return null;
-  const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-  const win =
-    (Zotero as any).getMainWindow?.() ??
-    (Zotero as any).getActiveZoteroPane?.()?.document?.defaultView ??
-    null;
-  fp.init(win, "Save markdown .zip", Ci.nsIFilePicker.modeSave);
-  fp.defaultString = defaultName;
-  fp.appendFilter("Zip archive", "*.zip");
-
-  const result: number = await new Promise((resolve) => {
-    try {
-      fp.open((rv: number) => resolve(rv));
-    } catch {
-      // Some platform builds expose open() as a sync return.
-      try {
-        resolve(fp.show());
-      } catch {
-        resolve(Ci.nsIFilePicker.returnCancel);
-      }
-    }
-  });
-  if (
-    result !== Ci.nsIFilePicker.returnOK &&
-    result !== Ci.nsIFilePicker.returnReplace
-  ) {
+  let picked: string | false;
+  try {
+    picked = await new ztoolkit.FilePicker(
+      "Save markdown .zip",
+      "save",
+      [["Zip archive", "*.zip"]],
+      defaultName,
+    ).open();
+  } catch (e) {
+    log(`save dialog failed: ${(e as Error).message}`);
     return null;
   }
-  const path: string | null = fp.file?.path ?? null;
-  if (!path) return null;
+  if (!picked) return null;
   // Force the .zip extension if the user typed one without it.
-  return /\.zip$/i.test(path) ? path : `${path}.zip`;
+  return /\.zip$/i.test(picked) ? picked : `${picked}.zip`;
 }
 
 // ---------------------------------------------------------------------------

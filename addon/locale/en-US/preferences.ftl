@@ -37,6 +37,9 @@ pref-attach-to-item =
 pref-add-frontmatter =
     .label = Prepend YAML frontmatter with Zotero metadata
 pref-frontmatter-help = Adds title, authors, year, doi, url, zotero_key, citation_key to every .md output as a YAML --- block at the top.
+pref-exclude-images =
+    .label = Exclude images — keep only text and tables
+pref-exclude-images-help = By default every figure is embedded in the .md as base64 data, which can grow a paper's markdown by tens of megabytes. When enabled, each image is replaced with a tiny <!-- image --> placeholder comment instead.
 pref-export-folder = Export folder
 pref-export-folder-help = Absolute path. If set, every converted .md is ALSO written here. Filename uses the item's citation key when available, otherwise the Zotero item key. Leave empty to disable.
 

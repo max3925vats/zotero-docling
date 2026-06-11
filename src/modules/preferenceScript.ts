@@ -26,6 +26,7 @@ const ALL_PREF_KEYS: ReadonlyArray<string> = [
   "doOcr",
   "forceOcr",
   "tableMode",
+  "excludeImages",
   "doFormulaEnrichment",
   "doCodeEnrichment",
   "doChartExtraction",

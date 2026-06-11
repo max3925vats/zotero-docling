@@ -39,3 +39,27 @@ export function truncateMiddle(s: string, max: number): string {
   const tail = Math.floor(keep / 2);
   return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
 }
+
+/**
+ * Format a byte count as a compact human string with one decimal:
+ *   512        → "512 B"
+ *   2_048      → "2.0 KB"
+ *   18_874_368 → "18.0 MB"
+ *   0/negative/NaN → "0 B"
+ *
+ * Used by the remove-images toast to report how much bloat was shed.
+ */
+export function formatBytes(bytes: number | undefined): string {
+  if (!Number.isFinite(bytes) || (bytes as number) <= 0) return "0 B";
+  const b = bytes as number;
+  if (b < 1024) return `${Math.round(b)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = b;
+  let unit = "B";
+  for (const next of units) {
+    if (value < 1024) break;
+    value /= 1024;
+    unit = next;
+  }
+  return `${value.toFixed(1)} ${unit}`;
+}

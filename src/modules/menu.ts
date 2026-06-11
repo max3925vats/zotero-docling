@@ -38,12 +38,15 @@ import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { truncateMiddle, formatDuration } from "../utils/format";
 import { onExportMarkdownZipClick } from "./markdownZipExport";
+import { onRemoveImagesClick, resolveMdTargets } from "./removeImages";
 
 const LOG = "[Docling/menu]";
 const MENU_CONVERT_ID = "zotero-docling-convert";
 const MENU_RECONVERT_ID = "zotero-docling-reconvert";
 const MENU_EXPORT_MD_ZIP_ID = "zotero-docling-export-md-zip";
 const TOOLS_EXPORT_MD_ZIP_ID = "zotero-docling-tools-export-md-zip";
+const MENU_REMOVE_IMAGES_ID = "zotero-docling-remove-images";
+const TOOLS_REMOVE_IMAGES_ID = "zotero-docling-tools-remove-images";
 
 // Re-exports — used by other modules (markdownZipExport.ts) that need to
 // resolve a Zotero selection in the same way the right-click handlers do.
@@ -412,6 +415,8 @@ const ALL_MENU_IDS = [
   MENU_RECONVERT_ID,
   MENU_EXPORT_MD_ZIP_ID,
   TOOLS_EXPORT_MD_ZIP_ID,
+  MENU_REMOVE_IMAGES_ID,
+  TOOLS_REMOVE_IMAGES_ID,
 ];
 
 export function registerMenu(): void {
@@ -469,6 +474,30 @@ export function registerMenu(): void {
     label: getString("menuitem-tools-export-md-zip"),
     commandListener: () => {
       void onExportMarkdownZipClick("tools");
+    },
+  });
+
+  // Item right-click: Remove images from markdown — only when the selection
+  // resolves to ≥1 markdown attachment to rewrite. The handler re-confirms
+  // before touching any file.
+  ztoolkit.Menu.register("item", {
+    tag: "menuitem",
+    id: MENU_REMOVE_IMAGES_ID,
+    label: getString("menuitem-remove-images"),
+    commandListener: () => {
+      void onRemoveImagesClick("selection");
+    },
+    getVisibility: () => resolveMdTargets(getSelectedItems()).length > 0,
+  });
+
+  // Tools → Docling: Remove images from markdown…. Same handler as the
+  // right-click; toasts a hint when nothing usable is selected.
+  ztoolkit.Menu.register("menuTools", {
+    tag: "menuitem",
+    id: TOOLS_REMOVE_IMAGES_ID,
+    label: getString("menuitem-tools-remove-images"),
+    commandListener: () => {
+      void onRemoveImagesClick("tools");
     },
   });
 

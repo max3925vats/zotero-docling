@@ -18,6 +18,7 @@ declare namespace _ZoteroTypes {
       "doOcr": boolean;
       "forceOcr": boolean;
       "tableMode": string;
+      "excludeImages": boolean;
       "doFormulaEnrichment": boolean;
       "doCodeEnrichment": boolean;
       "doChartExtraction": boolean;
