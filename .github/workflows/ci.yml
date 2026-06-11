@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+# Least-privilege: CI only reads the repo; no job pushes commits, releases, or comments.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
