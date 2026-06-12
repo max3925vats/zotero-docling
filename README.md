@@ -18,6 +18,8 @@ Markdown is plain text, so converted papers drop straight into note apps like
 Obsidian, AI/RAG pipelines, citation extraction, summarisation, literature
 reviews — anything that prefers text over PDFs.
 
+![Right-click a PDF attachment and choose "Convert with Docling"](docs/images/context-menu.png)
+
 ---
 
 ## Quick start
@@ -225,6 +227,8 @@ VLM presets, enrichments, etc.) live inside two collapsible disclosure
 sections — **Conversion options** and **Advanced** — collapsed by default so
 the first-run experience stays focused on Server, Behavior, and Output.
 Click either header to expand. Hover any field for inline help.
+
+![The zotero-docling preferences pane: server URL with Test Connection, plus Behavior, Output, and Conversion options](docs/images/preferences.png)
 
 ### Exporting markdown to a .zip
 

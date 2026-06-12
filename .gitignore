@@ -30,3 +30,6 @@ docs/PLAN.md
 
 # Note: typings/i10n.d.ts and prefs.d.ts ARE committed even though they are
 # scaffold-generated, so a fresh clone can typecheck before the first build.
+
+# Local scratch space (screenshots, disposable intermediates)
+scratch/
