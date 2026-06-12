@@ -33,3 +33,6 @@ docs/PLAN.md
 
 # Local scratch space (screenshots, disposable intermediates)
 scratch/
+
+# Local working notes (not for the public repo)
+NOTES.md
