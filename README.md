@@ -220,16 +220,24 @@ Then install the `.xpi` via **Tools → Plugins** as above.
 4. (Optional) tick **Auto-convert new PDF attachments** in Behavior to run
    conversion automatically as you import new PDFs.
 
-<img src="docs/images/context-menu.png" alt="Right-click a PDF attachment and choose &quot;Convert with Docling&quot;" width="270">
-
-
 All docling-serve options exposed in the preferences pane (pipeline, OCR,
 VLM presets, enrichments, etc.) live inside two collapsible disclosure
 sections — **Conversion options** and **Advanced** — collapsed by default so
 the first-run experience stays focused on Server, Behavior, and Output.
 Click either header to expand. Hover any field for inline help.
 
-![The zotero-docling preferences pane: server URL with Test Connection, plus Behavior, Output, and Conversion options](docs/images/preferences.png)
+### Screenshots
+
+<table>
+  <tr>
+    <td valign="top"><img src="docs/images/context-menu.png" alt="Right-click a PDF attachment and choose Convert with Docling" width="270"></td>
+    <td valign="top"><img src="docs/images/preferences.png" alt="The zotero-docling preferences pane" width="420"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Convert from the right-click menu</em></td>
+    <td align="center"><em>Preferences pane</em></td>
+  </tr>
+</table>
 
 ### Exporting markdown to a .zip
 
