@@ -18,8 +18,6 @@ Markdown is plain text, so converted papers drop straight into note apps like
 Obsidian, AI/RAG pipelines, citation extraction, summarisation, literature
 reviews — anything that prefers text over PDFs.
 
-![Right-click a PDF attachment and choose "Convert with Docling"](docs/images/context-menu.png)
-
 ---
 
 ## Quick start
@@ -221,6 +219,9 @@ Then install the `.xpi` via **Tools → Plugins** as above.
    is out of the way.
 4. (Optional) tick **Auto-convert new PDF attachments** in Behavior to run
    conversion automatically as you import new PDFs.
+
+<img src="docs/images/context-menu.png" alt="Right-click a PDF attachment and choose &quot;Convert with Docling&quot;" width="270">
+
 
 All docling-serve options exposed in the preferences pane (pipeline, OCR,
 VLM presets, enrichments, etc.) live inside two collapsible disclosure
