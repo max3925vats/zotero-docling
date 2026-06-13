@@ -64,5 +64,8 @@
         }
       }
     ]
+  },
+  "overrides": {
+    "serialize-javascript": ">=7.0.5"
   }
 }
