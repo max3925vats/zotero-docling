@@ -22,6 +22,8 @@ jobs:
         uses: zotero-plugin-dev/workflows/setup-js@main
       - name: Run Lint
         run: npm run lint:check
+      - name: Check XHTML well-formedness
+        run: npm run check:xhtml
 
   build:
     runs-on: ubuntu-latest
