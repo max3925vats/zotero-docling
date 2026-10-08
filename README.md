@@ -99,7 +99,7 @@ You need both.
 ## Requirements
 
 - **Zotero** 8.0 – 10.0.x (tested on Zotero 10.0.3; CI runs the test suite on
-  Zotero 10.0.6 and the current beta). For Zotero 7, use the 0.4.x
+  Zotero 8.0.4, 10.0.6 and the current beta). For Zotero 7, use the 0.4.x
   releases.
 - **[docling-serve](https://github.com/docling-project/docling-serve)** running
   locally or reachable over HTTP.

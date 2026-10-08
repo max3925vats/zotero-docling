@@ -53,6 +53,9 @@ jobs:
       fail-fast: false
       matrix:
         zotero:
+          - name: Zotero 8.0.4
+            url: https://download.zotero.org/client/release/8.0.4/Zotero-8.0.4_linux-x86_64.tar.xz
+            experimental: false
           - name: Zotero 10.0.6
             url: https://download.zotero.org/client/release/10.0.6/Zotero-10.0.6_linux-x86_64.tar.xz
             experimental: false
