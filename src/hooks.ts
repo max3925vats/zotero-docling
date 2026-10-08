@@ -81,7 +81,9 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // Menus are inserted into the current main window's document, so they
   // must be registered per window load. Registering once at startup left a
   // closed-and-reopened main window (macOS) without them (audit M6).
-  safely("menu registration", registerMenu);
+  // Skip until onStartup has loaded translations (Zotero can signal a window
+  // load before that); onStartup then runs this again for every window.
+  if (addon.data.locale) safely("menu registration", () => registerMenu(win));
 
   // Blur/focus listeners drive the managed-progress hide-on-blur behaviour
   // (the "stop showing the toast when user switches apps" UX). Re-show on
@@ -109,8 +111,9 @@ function registerPrefsPane(): void {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   safely("focus listener removal", () => detachFocusListeners(win));
-  safely("menu removal", unregisterMenu);
-  safely("toolkit cleanup", () => ztoolkit.unregisterAll());
+  safely("menu removal", () => unregisterMenu(win));
+  // No toolkit-wide unregisterAll() here: the toolkit is shared, so that
+  // would also remove things belonging to other open windows.
   safely("dialog close", () => addon.data.dialog?.window?.close());
 }
 
@@ -121,10 +124,10 @@ function onShutdown(): void {
   // Every step runs even if an earlier one throws; previously one throw
   // skipped the rest, including unregistering the instance (audit M7).
   safely("notifier removal", unregisterNotifier);
-  safely("focus listener removal", () => {
-    for (const win of Zotero.getMainWindows()) detachFocusListeners(win);
-  });
-  safely("menu removal", unregisterMenu);
+  for (const win of Zotero.getMainWindows()) {
+    safely("focus listener removal", () => detachFocusListeners(win));
+    safely("menu removal", () => unregisterMenu(win));
+  }
   safely("toolkit cleanup", () => ztoolkit.unregisterAll());
   safely("dialog close", () => addon.data.dialog?.window?.close());
   // @ts-expect-error - Plugin instance is not typed

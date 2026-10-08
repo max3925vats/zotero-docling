@@ -441,18 +441,32 @@ const ALL_MENU_IDS = [
   TOOLS_REMOVE_IMAGES_ID,
 ];
 
-export function registerMenu(): void {
-  // Hot-reload safety: kill previous registrations first.
-  for (const id of ALL_MENU_IDS) {
-    try {
-      ztoolkit.Menu.unregister(id);
-    } catch {
-      /* not present — fine */
-    }
-  }
+// Documents we've already added menu items to. A second load signal for the
+// same window (Zotero's own onMainWindowLoad plus our startup pass) would
+// otherwise stack another set of popupshowing visibility listeners.
+const registeredDocs = new WeakSet<Document>();
+
+/** Remove our menu items from one window's document. */
+function removeMenuItems(doc: Document): void {
+  for (const id of ALL_MENU_IDS) doc.getElementById(id)?.remove();
+}
+
+/**
+ * Add our menu items to `win`. Items go into that window's own popups —
+ * not `Zotero.getMainWindow()`, which with several main windows open may be
+ * a different window (audit review of PR 2).
+ */
+export function registerMenu(win: Window): void {
+  const doc = win.document;
+  if (registeredDocs.has(doc)) return;
+  const itemPopup = doc.querySelector("#zotero-itemmenu");
+  const toolsPopup = doc.querySelector("#menu_ToolsPopup");
+  if (!itemPopup || !toolsPopup) return; // window not ready; next load retries
+  // Hot-reload safety: drop items left by a previous copy of the plugin.
+  removeMenuItems(doc);
 
   // Item right-click: Convert
-  ztoolkit.Menu.register("item", {
+  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
     tag: "menuitem",
     id: MENU_CONVERT_ID,
     label: getString("menuitem-convert"),
@@ -464,7 +478,7 @@ export function registerMenu(): void {
 
   // Item right-click: Re-convert (replace) — only when there's already a
   // matching .md to replace, otherwise this duplicates plain Convert.
-  ztoolkit.Menu.register("item", {
+  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
     tag: "menuitem",
     id: MENU_RECONVERT_ID,
     label: getString("menuitem-reconvert"),
@@ -477,7 +491,7 @@ export function registerMenu(): void {
   // Item right-click: Export markdown to .zip. Shown whenever
   // the selection resolves to ≥1 PDF — the export handler then handles
   // the missing-md case via a confirm dialog.
-  ztoolkit.Menu.register("item", {
+  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
     tag: "menuitem",
     id: MENU_EXPORT_MD_ZIP_ID,
     label: getString("menuitem-export-md-zip"),
@@ -490,7 +504,7 @@ export function registerMenu(): void {
   // Tools → Docling: Export markdown to .zip (.zip). Same handler as the
   // right-click but reachable without a selection — falls back to "current
   // library" when nothing is selected.
-  ztoolkit.Menu.register("menuTools", {
+  ztoolkit.Menu.register(toolsPopup as XULMenuPopupElement, {
     tag: "menuitem",
     id: TOOLS_EXPORT_MD_ZIP_ID,
     label: getString("menuitem-tools-export-md-zip"),
@@ -502,7 +516,7 @@ export function registerMenu(): void {
   // Item right-click: Remove images from markdown — only when the selection
   // resolves to ≥1 markdown attachment to rewrite. The handler re-confirms
   // before touching any file.
-  ztoolkit.Menu.register("item", {
+  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
     tag: "menuitem",
     id: MENU_REMOVE_IMAGES_ID,
     label: getString("menuitem-remove-images"),
@@ -514,7 +528,7 @@ export function registerMenu(): void {
 
   // Tools → Docling: Remove images from markdown…. Same handler as the
   // right-click; toasts a hint when nothing usable is selected.
-  ztoolkit.Menu.register("menuTools", {
+  ztoolkit.Menu.register(toolsPopup as XULMenuPopupElement, {
     tag: "menuitem",
     id: TOOLS_REMOVE_IMAGES_ID,
     label: getString("menuitem-tools-remove-images"),
@@ -523,15 +537,12 @@ export function registerMenu(): void {
     },
   });
 
+  registeredDocs.add(doc);
   log(`registerMenu: registered ${ALL_MENU_IDS.join(", ")}`);
 }
 
-export function unregisterMenu(): void {
-  for (const id of ALL_MENU_IDS) {
-    try {
-      ztoolkit.Menu.unregister(id);
-    } catch {
-      /* ignore */
-    }
-  }
+/** Remove our menu items from `win` only. */
+export function unregisterMenu(win: Window): void {
+  removeMenuItems(win.document);
+  registeredDocs.delete(win.document);
 }
