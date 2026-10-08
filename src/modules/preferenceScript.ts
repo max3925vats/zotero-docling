@@ -205,8 +205,7 @@ function bindPresetDetail(
  */
 function bindAuthSchemeToggle(win: Window): void {
   const menu = win.document.getElementById("zotero-docling-auth-scheme") as
-    | (HTMLElement & { value?: string })
-    | null;
+    (HTMLElement & { value?: string }) | null;
   const usernameRow = win.document.getElementById(
     "zotero-docling-auth-username-row",
   ) as HTMLElement | null;

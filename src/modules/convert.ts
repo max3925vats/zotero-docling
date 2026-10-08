@@ -342,8 +342,7 @@ function formatServerErrors(data: ConvertResponse): string {
 // ---------------------------------------------------------------------------
 
 type FetchOutcome =
-  | { ok: true; data: ConvertResponse }
-  | { ok: false; message: string };
+  { ok: true; data: ConvertResponse } | { ok: false; message: string };
 
 interface TaskStatusResponse {
   task_id?: string;
@@ -683,8 +682,10 @@ async function convertAttachmentInner(
   // post-processor adds one), strip it before prepending our own so we don't
   // end up with two `---` blocks.
   const addFrontmatter = (getPref("addFrontmatter") ?? true) as boolean;
-  const parentItem = Zotero.Items.get(parentItemID);
-  const fm = addFrontmatter ? buildFrontmatter(parentItem ?? null) : "";
+  // Items.get returns `false` (not null) for a missing ID, so `??` would not
+  // catch it — normalise to null for the helpers below.
+  const parentItem = Zotero.Items.get(parentItemID) || null;
+  const fm = addFrontmatter ? buildFrontmatter(parentItem) : "";
   const body = fm ? stripExistingFrontmatter(rawMarkdown) : rawMarkdown;
   const markdown = fm ? `${fm}\n${body}` : body;
 
