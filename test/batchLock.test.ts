@@ -34,7 +34,11 @@ describe("batch lock", function () {
   before(function () {
     const g = globalThis as any;
     g.addon = (Zotero as any)[config.addonInstance];
-    g.ztoolkit = g.addon.data.ztoolkit;
+    // A getter, not a snapshot: window loads replace addon.data.ztoolkit.
+    Object.defineProperty(g, "ztoolkit", {
+      configurable: true,
+      get: () => g.addon.data.ztoolkit,
+    });
   });
 
   afterEach(async function () {
