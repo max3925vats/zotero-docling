@@ -36,3 +36,7 @@ scratch/
 
 # Local working notes (not for the public repo)
 NOTES.md
+
+# Local audit reports and implementation plans (not for the public repo)
+Audit_*.md
+plan/

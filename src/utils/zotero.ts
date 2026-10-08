@@ -3,6 +3,12 @@
 
 import { withDbLock } from "./dbLock";
 
+// TEMPORARY (red step): mirrors the current inline rule so the new tests can
+// demonstrate the bug in CI before the fix lands.
+export function mdNameForPdf(pdfFilename: string): string {
+  return pdfFilename.replace(/\.pdf$/i, ".md");
+}
+
 /**
  * True if the parent item already has a markdown child attachment.
  *
