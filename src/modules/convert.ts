@@ -1031,6 +1031,9 @@ export async function preflightServer(): Promise<boolean> {
  * http://host:9292/upstream/docling-serve (issue #44). A query string or
  * fragment is rejected because appending a path after it would break.
  */
+// TEMPORARY (red step).
+export function migrateUrlCredentials(): void {}
+
 export function normalizeServerUrl(
   raw: string,
 ): { ok: true; url: string } | { ok: false; message: string } {
