@@ -39,9 +39,10 @@ jobs:
           name: build-result
           path: .scaffold/build
 
-  # Tests run inside a real Zotero. v0.4.x supports Zotero 7 through 10, so
-  # both ends are pinned and required. Beta is an early warning only.
-  # Bump the pinned versions when new point releases come out.
+  # Tests run inside a real Zotero. Supported releases are pinned and
+  # required; beta is an early warning only. (Zotero 7 was dropped in 0.5.0;
+  # 0.4.x is the last line for it.) Bump the pinned versions when new point
+  # releases come out.
   test:
     name: test (${{ matrix.zotero.name }})
     runs-on: ubuntu-latest
@@ -52,9 +53,6 @@ jobs:
       fail-fast: false
       matrix:
         zotero:
-          - name: Zotero 7.0.32
-            url: https://download.zotero.org/client/release/7.0.32/Zotero-7.0.32_linux-x86_64.tar.bz2
-            experimental: false
           - name: Zotero 10.0.6
             url: https://download.zotero.org/client/release/10.0.6/Zotero-10.0.6_linux-x86_64.tar.xz
             experimental: false

@@ -1,6 +1,6 @@
 # zotero-docling
 
-A Zotero plugin (Zotero 7 – 10) that converts PDF attachments to structured
+A Zotero plugin (Zotero 8 – 10) that converts PDF attachments to structured
 Markdown using the [Docling](https://github.com/docling-project/docling)
 document-understanding pipeline, and attaches the resulting `.md` file back to
 the same parent item.
@@ -98,9 +98,9 @@ You need both.
 
 ## Requirements
 
-- **Zotero** 7.0 – 10.0.x (tested on Zotero 10.0.3; CI runs the test suite on
-  Zotero 7.0.32 and 10.0.6). The 0.4.x line is the last to support Zotero 7;
-  0.5.0 will require Zotero 8 or later.
+- **Zotero** 8.0 – 10.0.x (tested on Zotero 10.0.3; CI runs the test suite on
+  Zotero 10.0.6 and the current beta). For Zotero 7, use the 0.4.x
+  releases.
 - **[docling-serve](https://github.com/docling-project/docling-serve)** running
   locally or reachable over HTTP.
 - For VLM pipelines: enough RAM/disk for the model weights (Granite-Docling

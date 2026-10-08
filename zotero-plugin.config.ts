@@ -118,7 +118,8 @@ export default defineConfig({
           __env__: `"${process.env.NODE_ENV}"`,
         },
         bundle: true,
-        target: "firefox115",
+        // Zotero 8, 9 and 10 all run on Firefox 140 ESR (0.5.0 dropped Zotero 7).
+        target: "firefox140",
         outfile: `.scaffold/build/addon/content/scripts/${pkg.config.addonRef}.js`,
         plugins: [patchToolkitEsmImport],
       },
