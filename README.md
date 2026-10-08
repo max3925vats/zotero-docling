@@ -212,7 +212,9 @@ Then install the `.xpi` via **Tools → Plugins** as above.
 1. **Settings**: open Zotero → **Settings → zotero-docling**.
 2. Verify the server URL (default `http://localhost:5001`) and click **Test
    Connection** — it should turn green. If it doesn't, make sure the
-   `docling-serve` terminal from the install step is still running.
+   `docling-serve` terminal from the install step is still running. If
+   docling-serve sits behind a reverse proxy at a sub-path, enter the full
+   base URL (e.g. `http://host:9292/upstream/docling-serve`).
 3. Right-click a PDF (or parent item) in your library → **Convert with
    Docling**. A `.md` child appears under the parent — within seconds once
    the [first-run model download](#first-conversion-downloads-model-weights)

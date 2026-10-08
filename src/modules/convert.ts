@@ -634,12 +634,13 @@ async function convertAttachmentInner(
   }
 
   // --- 5. Build form + POST ---
-  const serverUrl = ((getPref("serverUrl") as string) ?? "")
-    .replace(/\/+$/, "")
-    .trim();
-  if (!serverUrl) {
-    return { status: "error", message: "serverUrl preference is empty" };
+  const normalizedUrl = normalizeServerUrl(
+    (getPref("serverUrl") as string) ?? "",
+  );
+  if (!normalizedUrl.ok) {
+    return { status: "error", message: normalizedUrl.message };
   }
+  const serverUrl = normalizedUrl.url;
 
   let api: ReturnType<typeof getWebApis>;
   try {
@@ -825,29 +826,33 @@ function exportBaseName(parent: Zotero.Item | null): string {
  * skip the batch — avoids spamming N "Cannot reach docling-serve" toasts.
  */
 export async function preflightServer(): Promise<boolean> {
-  const serverUrl = ((getPref("serverUrl") as string) ?? "")
-    .replace(/\/+$/, "")
-    .trim();
-  if (!serverUrl) return false;
+  const serverUrl = (getPref("serverUrl") as string) ?? "";
+  if (!serverUrl.trim()) return false;
   const r = await testServerConnection(serverUrl);
   return r.ok;
 }
 
-export async function testServerConnection(
-  serverUrl: string,
-): Promise<{ ok: true; serverUrl: string } | { ok: false; message: string }> {
-  const url = serverUrl.replace(/\/+$/, "").trim();
-  if (!url) return { ok: false, message: "Server URL is empty" };
-  // Validate before issuing a fetch — a missing scheme or unexpected path
-  // produces confusing low-level errors otherwise. We require an http(s) URL
-  // with no path component because every endpoint we hit appends its own.
+/**
+ * Validate and normalise the configured server URL. The URL is a base that
+ * every endpoint (/health, /v1/convert/file, ...) is appended to, so a path
+ * is allowed — docling-serve behind a reverse proxy often lives at e.g.
+ * http://host:9292/upstream/docling-serve (issue #44). A query string or
+ * fragment is rejected because appending a path after it would break.
+ */
+export function normalizeServerUrl(
+  raw: string,
+): { ok: true; url: string } | { ok: false; message: string } {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return { ok: false, message: "Server URL is empty" };
+  // Validate before issuing a fetch — a missing scheme produces confusing
+  // low-level errors otherwise.
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(trimmed);
   } catch {
     return {
       ok: false,
-      message: `Invalid URL — missing scheme? Try http://${url}`,
+      message: `Invalid URL — missing scheme? Try http://${trimmed}`,
     };
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -856,12 +861,22 @@ export async function testServerConnection(
       message: `Unsupported scheme "${parsed.protocol}" — use http or https`,
     };
   }
-  if (parsed.pathname !== "/" && parsed.pathname !== "") {
+  if (parsed.search || parsed.hash) {
     return {
       ok: false,
-      message: `Server URL must not include a path (got "${parsed.pathname}")`,
+      message: "Server URL must not include a query string or #fragment",
     };
   }
+  const basePath = parsed.pathname.replace(/\/+$/, "");
+  return { ok: true, url: `${parsed.origin}${basePath}` };
+}
+
+export async function testServerConnection(
+  serverUrl: string,
+): Promise<{ ok: true; serverUrl: string } | { ok: false; message: string }> {
+  const normalized = normalizeServerUrl(serverUrl);
+  if (!normalized.ok) return normalized;
+  const url = normalized.url;
   let api: ReturnType<typeof getWebApis>;
   try {
     api = getWebApis();
