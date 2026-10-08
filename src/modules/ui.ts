@@ -167,15 +167,58 @@ export function finishManagedProgress(
   // If pw is null (Zotero blurred), keep state — onZoteroFocus will re-show.
 }
 
-/** Hide the visible window but keep the state. Called from a blur listener. */
+/**
+ * True while any of this application's windows (main window, our progress
+ * popup, a dialog) holds OS focus. Firefox's focus manager reports a null
+ * activeWindow once focus has moved to another application.
+ */
+export function appHasFocus(
+  focusManager: { activeWindow: unknown } | undefined = (globalThis as any)
+    .Services?.focus,
+): boolean {
+  if (!focusManager) return false;
+  return focusManager.activeWindow != null;
+}
+
+// How long to let focus settle after a blur before deciding the user left
+// Zotero. The blur fires before the newly focused window is reported active.
+const BLUR_SETTLE_MS = 100;
+
+/**
+ * Hide the visible window but keep the state. Called from a blur listener.
+ *
+ * On Linux/X11, showing the progress popup itself blurs the main window
+ * (issue #45). Hiding on that blur made focus bounce back, which re-showed
+ * the popup, which blurred again — a flicker loop. So we only hide once focus
+ * has left the application. If focus merely moved to another Zotero window
+ * (typically our popup), we keep the popup and watch that window instead, so
+ * a later switch to another app still hides it.
+ */
 export function onZoteroBlur(): void {
   if (!managed?.pw) return;
-  try {
-    managed.pw.close();
-  } catch {
-    /* ignore */
-  }
-  managed.pw = null;
+  setTimeout(() => {
+    if (!managed?.pw) return;
+    if (appHasFocus()) {
+      const active = (globalThis as any).Services?.focus?.activeWindow as
+        | Window
+        | undefined;
+      const isMainWindow = Zotero.getMainWindows?.().includes(
+        active as _ZoteroTypes.MainWindow,
+      );
+      // Main windows already carry a blur listener (hooks.ts); other Zotero
+      // windows (the popup) get a one-shot one that re-runs this check.
+      if (active && !isMainWindow) {
+        active.addEventListener("blur", () => onZoteroBlur(), { once: true });
+      }
+      return;
+    }
+    try {
+      managed.pw.close();
+    } catch {
+      /* ignore */
+    }
+    managed.pw = null;
+  }, BLUR_SETTLE_MS);
 }
 
 /** Re-show the managed progress with current state. Called from focus. */
