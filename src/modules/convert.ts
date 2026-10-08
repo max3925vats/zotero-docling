@@ -1105,6 +1105,14 @@ export function normalizeServerUrl(
     };
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    // "localhost:5001" parses with scheme "localhost:" — that's a missing
+    // scheme, not an exotic one.
+    if (!trimmed.includes("://")) {
+      return {
+        ok: false,
+        message: `Invalid URL — missing scheme? Try http://${trimmed}`,
+      };
+    }
     return {
       ok: false,
       message: `Unsupported scheme "${parsed.protocol}" — use http or https`,

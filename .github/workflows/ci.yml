@@ -18,7 +18,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GitHub_TOKEN }}
     steps:
       - name: Setup JS
-        uses: zotero-plugin-dev/workflows/setup-js@main
+        uses: zotero-plugin-dev/workflows/setup-js@fdcc78c01af94cd1a25f88fcc529115d839867f1 # v1.1.0
       - name: Run Lint
         run: npm run lint:check
       - name: Check XHTML well-formedness
@@ -30,7 +30,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GitHub_TOKEN }}
     steps:
       - name: Setup JS
-        uses: zotero-plugin-dev/workflows/setup-js@main
+        uses: zotero-plugin-dev/workflows/setup-js@fdcc78c01af94cd1a25f88fcc529115d839867f1 # v1.1.0
       - name: Run Build
         run: npm run build
       - name: Upload build result
@@ -39,11 +39,36 @@ jobs:
           name: build-result
           path: .scaffold/build
 
+  # Tests run inside a real Zotero. v0.4.x supports Zotero 7 through 10, so
+  # both ends are pinned and required. Beta is an early warning only.
+  # Bump the pinned versions when new point releases come out.
   test:
+    name: test (${{ matrix.zotero.name }})
     runs-on: ubuntu-latest
     needs:
       - build
+    continue-on-error: ${{ matrix.zotero.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        zotero:
+          - name: Zotero 7.0.32
+            url: https://download.zotero.org/client/release/7.0.32/Zotero-7.0.32_linux-x86_64.tar.bz2
+            experimental: false
+          - name: Zotero 10.0.6
+            url: https://download.zotero.org/client/release/10.0.6/Zotero-10.0.6_linux-x86_64.tar.xz
+            experimental: false
+          - name: Zotero beta
+            url: https://www.zotero.org/download/client/dl?platform=linux-x86_64&channel=beta
+            experimental: true
     steps:
       - name: Setup JS
-        uses: zotero-plugin-dev/workflows/setup-js@main
+        uses: zotero-plugin-dev/workflows/setup-js@fdcc78c01af94cd1a25f88fcc529115d839867f1 # v1.1.0
+      - name: Download ${{ matrix.zotero.name }}
+        # The test runner skips its own (beta) download when this env var is set.
+        run: |
+          wget -q -O "$RUNNER_TEMP/zotero.tar" "${{ matrix.zotero.url }}"
+          mkdir -p "$RUNNER_TEMP/zotero"
+          tar -xf "$RUNNER_TEMP/zotero.tar" -C "$RUNNER_TEMP/zotero"
+          echo "ZOTERO_PLUGIN_ZOTERO_BIN_PATH=$RUNNER_TEMP/zotero/Zotero_linux-x86_64/zotero" >> "$GITHUB_ENV"
       - run: npm run test

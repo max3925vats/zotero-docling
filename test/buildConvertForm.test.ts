@@ -88,6 +88,25 @@ describe("buildConvertForm", function () {
     assert.isNull(form.get("picture_description_preset"));
   });
 
+  it("attaches the PDF as `files` with its filename", function () {
+    const form = buildConvertForm(bytes, "paper.pdf", getApi());
+    const file = form.get("files") as File | null;
+    assert.ok(file, "files part must be present");
+    assert.strictEqual(file?.name, "paper.pdf");
+  });
+
+  it("maps each enrichment checkbox to its form field", function () {
+    setPref("doFormulaEnrichment", true);
+    setPref("doCodeEnrichment", true);
+    setPref("doChartExtraction", true);
+    setPref("doPictureClassification", true);
+    const form = buildConvertForm(bytes, "p.pdf", getApi());
+    assert.strictEqual(form.get("do_formula_enrichment"), "true");
+    assert.strictEqual(form.get("do_code_enrichment"), "true");
+    assert.strictEqual(form.get("do_chart_extraction"), "true");
+    assert.strictEqual(form.get("do_picture_classification"), "true");
+  });
+
   it("excludeImages switches image_export_mode to placeholder", function () {
     setPref("excludeImages", true);
     const form = buildConvertForm(bytes, "p.pdf", getApi());

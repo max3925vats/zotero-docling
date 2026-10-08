@@ -30,9 +30,15 @@ describe("normalizeServerUrl", function () {
     assert.isFalse(normalizeServerUrl("   ").ok);
   });
 
-  it("rejects a URL without a scheme", function () {
+  it("rejects a URL without a scheme and suggests adding http://", function () {
+    // "localhost:5001" parses as scheme "localhost:", so this used to fall
+    // through to a confusing "Unsupported scheme" message.
     const r = normalizeServerUrl("localhost:5001");
     assert.isFalse(r.ok);
+    assert.include(
+      (r as { message: string }).message,
+      "Try http://localhost:5001",
+    );
   });
 
   it("rejects non-http schemes", function () {
