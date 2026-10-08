@@ -85,7 +85,6 @@ const VLM_PRESET_DETAIL: Record<string, string> = {
   glm_ocr: "GLM-4V OCR — Zhipu AI, multi-GB.",
   lightonocr: "LightOnOCR — efficient OCR-focused VLM.",
   falcon_ocr: "Falcon OCR — TII multilingual OCR.",
-  __custom__: "Type any preset name your docling-serve build supports.",
 };
 
 const PIC_PRESET_DETAIL: Record<string, string> = {
@@ -93,7 +92,6 @@ const PIC_PRESET_DETAIL: Record<string, string> = {
     "docling-serve's built-in default. Small, fast, sensible starting point.",
   smolvlm: "SmolVLM — smallest local picture-description model. ~500 MB.",
   granite_vision: "IBM Granite Vision — better descriptions, ~500 MB.",
-  __custom__: "Type any preset name your docling-serve build supports.",
 };
 
 /**
@@ -230,21 +228,20 @@ function bindPresetDetail(
   const menu = win.document.getElementById(
     `zotero-docling-${kind}-preset-menu`,
   ) as (HTMLElement & { value?: string }) | null;
+  const custom = win.document.getElementById(
+    `zotero-docling-${kind}-preset-custom`,
+  ) as (HTMLElement & { value?: string }) | null;
   const detail = win.document.getElementById(
     `zotero-docling-${kind}-preset-detail`,
   ) as HTMLElement | null;
   if (!menu || !detail) return;
+  const customKey =
+    prefKey === "vlmPreset"
+      ? "vlmPresetCustom"
+      : "pictureDescriptionPresetCustom";
 
-  const refresh = () => {
-    const value = (menu.value as string) || (getPref(prefKey) as string) || "";
-    const customKey =
-      prefKey === "vlmPreset"
-        ? "vlmPresetCustom"
-        : "pictureDescriptionPresetCustom";
-    const name =
-      value === "__custom__"
-        ? ((getPref(customKey) as string) ?? "").trim()
-        : value;
+  const apply = (value: string, customName: string) => {
+    const name = value === "__custom__" ? customName.trim() : value;
     detail.textContent =
       detailMap[name] ??
       (name
@@ -253,9 +250,19 @@ function bindPresetDetail(
           ? "Type a preset name your docling-serve build supports. Empty uses the server's default."
           : "");
   };
-  menu.addEventListener("command", refresh);
-  refresh();
-  return refresh;
+  // Live: read the elements (prefs may lag a pick or a keystroke).
+  const fromElements = () =>
+    apply((menu.value as string) ?? "", (custom?.value as string) ?? "");
+  menu.addEventListener("command", fromElements);
+  custom?.addEventListener("input", fromElements);
+  // Re-sync (load, Reset): read the prefs.
+  const fromPref = () =>
+    apply(
+      ((getPref(prefKey) as string) ?? "").trim(),
+      (getPref(customKey) as string) ?? "",
+    );
+  fromPref();
+  return fromPref;
 }
 
 /**
@@ -290,8 +297,8 @@ function bindAuthSchemeToggle(win: Window): (() => void) | void {
   ) as HTMLElement | null;
   if (!menu || !usernameRow || !headerNameRow || !secretRow) return;
 
-  const refresh = () => {
-    const scheme = ((menu.value as string) || "none").toLowerCase();
+  const apply = (value: string | undefined) => {
+    const scheme = (value || "none").toLowerCase();
     const showSecret = scheme !== "none";
     usernameRow.hidden = scheme !== "basic";
     headerNameRow.hidden = scheme !== "custom";
@@ -302,9 +309,12 @@ function bindAuthSchemeToggle(win: Window): (() => void) | void {
       secretLabel.setAttribute("data-l10n-id", authSecretLabelId(scheme));
     }
   };
-  menu.addEventListener("command", refresh);
-  refresh();
-  return refresh;
+  // On a menu pick, read the menu itself (its pref may not be written yet);
+  // when re-syncing (load, Reset), read the pref — the source of truth.
+  menu.addEventListener("command", () => apply(menu.value as string));
+  const fromPref = () => apply(getPref("authScheme") as string);
+  fromPref();
+  return fromPref;
 }
 
 /**
@@ -405,13 +415,19 @@ function bindPipelineToggle(win: Window): (() => void) | void {
   ) as HTMLElement | null;
   if (!vlmSection) return;
 
-  const refresh = () => {
-    const pipeline = (getPref("pipeline") as string) ?? "standard";
-    vlmSection.hidden = pipeline !== "vlm";
+  const apply = (pipeline: string | undefined) => {
+    vlmSection.hidden = (pipeline ?? "standard") !== "vlm";
   };
-  if (group) group.addEventListener("command", refresh);
-  refresh();
-  return refresh;
+  // On a pick, read the radiogroup (its pref may not be written yet, which
+  // left the VLM section one click behind); on re-sync, read the pref.
+  if (group) {
+    group.addEventListener("command", () =>
+      apply((group as HTMLElement & { value?: string }).value),
+    );
+  }
+  const fromPref = () => apply(getPref("pipeline") as string);
+  fromPref();
+  return fromPref;
 }
 
 /**
@@ -427,71 +443,89 @@ function bindResetButton(win: Window, refreshers: Array<() => void>): void {
     return;
   }
   btn.addEventListener("command", async () => {
-    const Services = (globalThis as any).Services;
-    // Translated text from preferences.ftl, with English fallbacks if the
-    // pane's localization isn't available.
-    let [title, body, done] = [
-      "Reset zotero-docling preferences?",
-      "This reverts every plugin preference (Server URL, auto-convert, pipeline, VLM preset, output, etc.) to its built-in default. Your Zotero library and existing markdown attachments are not touched.",
-      "Preferences reset to defaults",
-    ];
+    // One reset at a time: a double-click during the awaits below would
+    // otherwise open two prompts.
+    if (btn.hasAttribute("disabled")) return;
+    btn.setAttribute("disabled", "true");
     try {
-      const l10n = (win.document as any).l10n;
-      const values = await l10n?.formatValues?.([
-        { id: getLocaleID("pref-reset-confirm-title") },
-        { id: getLocaleID("pref-reset-confirm-body") },
-        { id: getLocaleID("pref-reset-done") },
-      ]);
-      if (values?.[0]) title = values[0];
-      if (values?.[1]) body = values[1];
-      if (values?.[2]) done = values[2];
-    } catch {
-      /* keep English */
-    }
-    // Fail closed: no prompt service means no reset.
-    const confirmed = Services?.prompt?.confirm?.(win, title, body) ?? false;
-    if (!confirmed) return;
-
-    const PREFIX = addon.data.config.prefsPrefix;
-    let cleared = 0;
-    for (const key of ALL_PREF_KEYS) {
-      try {
-        Zotero.Prefs.clear(`${PREFIX}.${key}`, true);
-        cleared++;
-      } catch (e) {
-        Zotero.debug(
-          `${LOG} prefs: clear ${key} failed: ${(e as Error).message}`,
-        );
-      }
-    }
-    Zotero.debug(`${LOG} prefs: reset ${cleared} keys to defaults`);
-
-    // Bring the dynamic parts of the pane back in line with the defaults.
-    for (const refresh of refreshers) {
-      try {
-        refresh();
-      } catch {
-        /* one stale section shouldn't block the rest */
-      }
-    }
-
-    // ProgressWindow toast for confirmation
-    try {
-      const pw = new Zotero.ProgressWindow({ closeOnClick: true });
-      pw.changeHeadline("zotero-docling");
-      pw.addDescription(done);
-      pw.show();
-      setTimeout(() => {
-        try {
-          pw.close();
-        } catch {
-          /* ignore */
-        }
-      }, 3000);
-    } catch {
-      /* ignore — toast is nice-to-have */
+      await resetPrefs(win, refreshers);
+    } finally {
+      btn.removeAttribute("disabled");
     }
   });
+}
+
+async function resetPrefs(
+  win: Window,
+  refreshers: Array<() => void>,
+): Promise<void> {
+  const Services = (globalThis as any).Services;
+  // Translated text from preferences.ftl, with English fallbacks if the
+  // pane's localization isn't available.
+  let [title, body, done] = [
+    "Reset zotero-docling preferences?",
+    "This reverts every plugin preference (Server URL, auto-convert, pipeline, VLM preset, output, etc.) to its built-in default. Your Zotero library and existing markdown attachments are not touched.",
+    "Preferences reset to defaults",
+  ];
+  try {
+    const l10n = (win.document as any).l10n;
+    const values = await l10n?.formatValues?.([
+      { id: getLocaleID("pref-reset-confirm-title") },
+      { id: getLocaleID("pref-reset-confirm-body") },
+      { id: getLocaleID("pref-reset-done") },
+    ]);
+    if (values?.[0]) title = values[0];
+    if (values?.[1]) body = values[1];
+    if (values?.[2]) done = values[2];
+  } catch {
+    /* keep English */
+  }
+  // Fail closed: no prompt service means no reset.
+  if (!Services?.prompt?.confirm) {
+    Zotero.debug(`${LOG} prefs: no prompt service — reset not confirmed`);
+    return;
+  }
+  if (!Services.prompt.confirm(win, title, body)) return;
+
+  const PREFIX = addon.data.config.prefsPrefix;
+  let cleared = 0;
+  for (const key of ALL_PREF_KEYS) {
+    try {
+      Zotero.Prefs.clear(`${PREFIX}.${key}`, true);
+      cleared++;
+    } catch (e) {
+      Zotero.debug(
+        `${LOG} prefs: clear ${key} failed: ${(e as Error).message}`,
+      );
+    }
+  }
+  Zotero.debug(`${LOG} prefs: reset ${cleared} keys to defaults`);
+
+  // Bring the dynamic parts of the pane back in line with the defaults.
+  for (const refresh of refreshers) {
+    try {
+      refresh();
+    } catch {
+      /* one stale section shouldn't block the rest */
+    }
+  }
+
+  // ProgressWindow toast for confirmation
+  try {
+    const pw = new Zotero.ProgressWindow({ closeOnClick: true });
+    pw.changeHeadline("zotero-docling");
+    pw.addDescription(done);
+    pw.show();
+    setTimeout(() => {
+      try {
+        pw.close();
+      } catch {
+        /* ignore */
+      }
+    }, 3000);
+  } catch {
+    /* ignore — toast is nice-to-have */
+  }
 }
 
 /**
@@ -530,10 +564,11 @@ function bindPresetCustomToggle(
     custom.value = migration.custom;
   }
 
-  const refresh = () => {
-    custom.hidden = menu.value !== "__custom__";
+  const apply = (value: string | undefined) => {
+    custom.hidden = value !== "__custom__";
   };
-  menu.addEventListener("command", refresh);
-  refresh();
-  return refresh;
+  menu.addEventListener("command", () => apply(menu.value as string));
+  const fromPref = () => apply(getPref(menuKey) as string);
+  fromPref();
+  return fromPref;
 }
