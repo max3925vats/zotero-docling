@@ -199,9 +199,8 @@ export function onZoteroBlur(): void {
   setTimeout(() => {
     if (!managed?.pw) return;
     if (appHasFocus()) {
-      const active = (globalThis as any).Services?.focus?.activeWindow as
-        | Window
-        | undefined;
+      const focusManager = (globalThis as any).Services?.focus;
+      const active: Window | undefined = focusManager?.activeWindow;
       const isMainWindow = Zotero.getMainWindows?.().includes(
         active as _ZoteroTypes.MainWindow,
       );
