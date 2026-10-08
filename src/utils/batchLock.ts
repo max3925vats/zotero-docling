@@ -23,3 +23,14 @@ export function releaseBatch(): void {
 export function isBatchRunning(): boolean {
   return holder !== null;
 }
+
+/** What to tell a user who was refused because the lock is held. */
+export function busyMessage(): string {
+  if (holder === "auto-convert") {
+    return "Auto-convert is running (or checking the server) — try again in a moment";
+  }
+  if (holder === "remove-images") {
+    return "Remove Images is running — try again in a moment";
+  }
+  return "A conversion batch is already running — wait for it to finish";
+}

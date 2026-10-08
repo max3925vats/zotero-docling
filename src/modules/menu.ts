@@ -33,7 +33,7 @@ import {
   findMatchingMdChild,
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
-import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
+import { busyMessage, releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { truncateMiddle, formatDuration } from "../utils/format";
@@ -251,11 +251,7 @@ export async function runBatch(
   // Only one batch at a time (menu, auto-convert and Remove Images share
   // the lock). Acquire is synchronous, so two rapid clicks can't both pass.
   if (!tryAcquireBatch("menu")) {
-    toast(
-      "Docling",
-      "A conversion batch is already running — wait for it to finish",
-      false,
-    );
+    toast("Docling", busyMessage(), false);
     return false;
   }
 
@@ -271,7 +267,9 @@ export async function runBatch(
 
   // Everything after the lock is taken runs inside this try, so the lock is
   // released however the batch ends — including a throw in preflight or
-  // progress setup (audit M1).
+  // progress setup (audit M1). An unexpected throw is reported below rather
+  // than leaving the progress window stuck on "converting…".
+  let unexpected: Error | null = null;
   try {
     // Pre-flight: avoid N×wall-of-error toasts when docling-serve isn't running.
     if (!(await preflightServer())) {
@@ -349,8 +347,24 @@ export async function runBatch(
       pdfs.map((item) => limiter.run(() => runOne(item))),
     );
     await applyStatusTagsToParents(batchResults);
+  } catch (e) {
+    unexpected = e as Error;
+    log(`batch failed unexpectedly: ${unexpected.message}`);
   } finally {
     releaseBatch();
+  }
+
+  if (unexpected) {
+    try {
+      finishManagedProgress(
+        false,
+        `${opts.menuLabel}: failed`,
+        `OK ${ok} · skipped ${skipped} · failed ${failed}\n${unexpected.message}`,
+      );
+    } catch {
+      toast("Docling", `Batch failed: ${unexpected.message}`, false);
+    }
+    return true;
   }
 
   const allOk = failed === 0;

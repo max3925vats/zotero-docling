@@ -127,7 +127,9 @@ export function getWebApis(): {
   }
   // Take AbortController from the same realm as fetch: a signal from one
   // realm isn't guaranteed to be honoured by a fetch from another.
-  // (A test override runs in this realm too.)
+  // (A test override runs in this realm too.) If the fetch's realm has no
+  // AbortController we fall back to the other realm's; the timeout race still
+  // rejects on time, but the underlying request may then not be cancelled.
   const fetchIsLocal = !!(fetchOverrideForTests || g.fetch);
   const AbortCtor = fetchIsLocal
     ? (g.AbortController ?? win?.AbortController)
@@ -411,7 +413,9 @@ function timeoutMs(
 ): number {
   const n = Number(getPref(key));
   const value = Number.isFinite(n) && n > 0 ? n : fallback;
-  return value * (key.endsWith("Sec") ? 1000 : 60_000);
+  // setTimeout treats anything above 2^31-1 ms (~24.8 days) as 0, which
+  // would make every request "time out" at once.
+  return Math.min(value * (key.endsWith("Sec") ? 1000 : 60_000), 2_147_483_647);
 }
 
 /** User-facing message for a failed request: timeout vs. unreachable. */

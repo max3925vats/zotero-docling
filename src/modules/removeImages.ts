@@ -15,7 +15,12 @@
 
 import { toast } from "./ui";
 import { getSelectedItems } from "./menu";
-import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
+import {
+  busyMessage,
+  isBatchRunning,
+  releaseBatch,
+  tryAcquireBatch,
+} from "../utils/batchLock";
 import {
   getLocalFilePath,
   findMatchingMdChild,
@@ -153,18 +158,21 @@ export async function onRemoveImagesClick(
     return;
   }
 
-  // Don't interleave with a running conversion batch — it may be writing
-  // the same .md attachments we're about to rewrite.
+  // Don't interleave with a running batch — a conversion may be writing the
+  // same .md attachments we're about to rewrite. Refuse up front so the user
+  // isn't asked to confirm an action that can't happen.
+  if (isBatchRunning()) {
+    toast("Docling", busyMessage(), false);
+    return;
+  }
+
   if (!confirmRemoveImages(targets.length)) return;
 
   // Hold the batch lock for the whole rewrite: a conversion (manual or
   // auto) may otherwise write the same .md files concurrently (audit M4).
+  // Re-checked here because something may have started during the dialog.
   if (!tryAcquireBatch("remove-images")) {
-    toast(
-      "Docling",
-      "A conversion batch is already running — wait for it to finish",
-      false,
-    );
+    toast("Docling", busyMessage(), false);
     return;
   }
 

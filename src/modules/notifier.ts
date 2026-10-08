@@ -83,7 +83,11 @@ const observer = {
 
 async function processPending(): Promise<void> {
   if (processing) {
-    log("processPending: already running, will pick up next debounce tick");
+    // The timer that called us has fired; forget it so the running batch's
+    // finally (below) sees no pending timer and reschedules for the IDs
+    // queued meanwhile. Otherwise they waited for the next import.
+    debounceTimer = null;
+    log("processPending: already running, will reschedule when it ends");
     return;
   }
   processing = true;

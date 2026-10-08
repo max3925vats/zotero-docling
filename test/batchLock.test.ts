@@ -3,6 +3,7 @@ import { config } from "../package.json";
 import { setFetchOverrideForTests } from "../src/modules/convert";
 import { runBatch } from "../src/modules/menu";
 import {
+  busyMessage,
   isBatchRunning,
   releaseBatch,
   tryAcquireBatch,
@@ -101,6 +102,41 @@ describe("batch lock", function () {
       await runBatch([pdf], { force: false, menuLabel: "test" });
 
       assert.isFalse(isBatchRunning());
+    });
+
+    it("releases the lock and resolves when the progress window throws as it opens", async function () {
+      const parent = await makeParentItem();
+      const pdf = await makeFileAttachment(parent, "d.pdf", "application/pdf");
+      setFetchOverrideForTests(stub(200, 500));
+      // Force the "Zotero is focused" branch so startManagedProgress really
+      // opens a window, and make opening it throw.
+      const z = Zotero as any;
+      const origWindows = z.getMainWindows;
+      const origPW = z.ProgressWindow;
+      z.getMainWindows = () => [{ document: { hasFocus: () => true } }];
+      z.ProgressWindow = function () {
+        throw new Error("ui boom");
+      };
+      let threw: unknown = null;
+      try {
+        await runBatch([pdf], { force: false, menuLabel: "test" });
+      } catch (e) {
+        threw = e;
+      } finally {
+        z.getMainWindows = origWindows;
+        z.ProgressWindow = origPW;
+      }
+
+      assert.isNull(threw, "runBatch must report, not reject");
+      assert.isFalse(isBatchRunning(), "lock must be released");
+    });
+
+    it("tells the user who holds the lock", function () {
+      tryAcquireBatch("auto-convert");
+      assert.match(busyMessage(), /auto-convert/i);
+      releaseBatch();
+      tryAcquireBatch("remove-images");
+      assert.match(busyMessage(), /remove images/i);
     });
 
     it("releases the lock when the server is down", async function () {
