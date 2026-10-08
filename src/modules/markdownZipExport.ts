@@ -242,6 +242,18 @@ interface BuildResult {
   failedReads: number;
 }
 
+/**
+ * Read a markdown attachment for zipping. Read as a string rather than bytes:
+ * IOUtils.read() returns a Uint8Array from Zotero's realm, and JSZip's
+ * `instanceof Uint8Array` type check fails across realms in the plugin
+ * sandbox ("Can't read the data of ..."). Strings are primitives, so they
+ * pass in any realm, and JSZip encodes them back to UTF-8. Our .md files are
+ * always written with IOUtils.writeUTF8, so decoding as UTF-8 is lossless.
+ */
+export async function readMarkdownForZip(path: string): Promise<string> {
+  return IOUtils.readUTF8(path);
+}
+
 async function buildZip(rows: ZipRow[]): Promise<BuildResult> {
   const zip = new JSZip();
   const taken = new Set<string>();
@@ -262,9 +274,9 @@ async function buildZip(rows: ZipRow[]): Promise<BuildResult> {
       failedReads++;
       continue;
     }
-    let bytes: Uint8Array;
+    let text: string;
     try {
-      bytes = await IOUtils.read(path);
+      text = await readMarkdownForZip(path);
     } catch (e) {
       log(`failed to read md ${path}: ${(e as Error).message}`);
       failedReads++;
@@ -272,7 +284,7 @@ async function buildZip(rows: ZipRow[]): Promise<BuildResult> {
     }
     const base = zipBaseName(row.parent);
     const entryName = zipUniqueName(base, taken);
-    zip.file(entryName, bytes);
+    zip.file(entryName, text);
     exported++;
   }
 
