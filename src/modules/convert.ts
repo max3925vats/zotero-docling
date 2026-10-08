@@ -22,6 +22,7 @@ import {
 import { withDbLock } from "../utils/dbLock";
 import { enrichServerError } from "../utils/serverErrorHints";
 import { toast } from "./ui";
+import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
 
 const LOG = "[zotero-docling]";
 
@@ -105,6 +106,7 @@ export function getWebApis(): {
   FormData: typeof FormData;
   Blob: typeof Blob;
   fetch: typeof fetch;
+  AbortController?: typeof AbortController;
 } {
   const g = globalThis as any;
   const win =
@@ -123,7 +125,19 @@ export function getWebApis(): {
       `Web API unavailable — FormData=${!!FormDataCtor} Blob=${!!BlobCtor} fetch=${!!fetchFn}`,
     );
   }
-  return { FormData: FormDataCtor, Blob: BlobCtor, fetch: fetchFn };
+  // Take AbortController from the same realm as fetch: a signal from one
+  // realm isn't guaranteed to be honoured by a fetch from another.
+  // (A test override runs in this realm too.)
+  const fetchIsLocal = !!(fetchOverrideForTests || g.fetch);
+  const AbortCtor = fetchIsLocal
+    ? (g.AbortController ?? win?.AbortController)
+    : (win?.AbortController ?? g.AbortController);
+  return {
+    FormData: FormDataCtor,
+    Blob: BlobCtor,
+    fetch: fetchFn,
+    AbortController: AbortCtor,
+  };
 }
 
 export type ConvertResult =
@@ -376,6 +390,36 @@ function httpLabelOf(r: Response): string {
   return r.statusText ? `HTTP ${r.status} ${r.statusText}` : `HTTP ${r.status}`;
 }
 
+/**
+ * Read a timeout pref as milliseconds. Non-numeric or non-positive values
+ * fall back to the shipped default rather than disabling the timeout.
+ */
+function timeoutMs(
+  key:
+    | "healthTimeoutSec"
+    | "pollTimeoutSec"
+    | "asyncUploadTimeoutMin"
+    | "asyncResultTimeoutMin"
+    | "syncTimeoutMin",
+  fallback: number,
+): number {
+  const n = Number(getPref(key));
+  const value = Number.isFinite(n) && n > 0 ? n : fallback;
+  return value * (key.endsWith("Sec") ? 1000 : 60_000);
+}
+
+/** User-facing message for a failed request: timeout vs. unreachable. */
+function requestFailureMessage(
+  e: unknown,
+  what: string,
+  settingLabel: string,
+): string {
+  if (e instanceof RequestTimeoutError) {
+    return `${e.message} ${what} (Settings → Advanced → Timeouts → ${settingLabel})`;
+  }
+  return "Server not reachable";
+}
+
 /** Parse a response as JSON. On non-2xx with no JSON body, return the HTTP label. */
 async function parseConvertResponse(r: Response): Promise<FetchOutcome> {
   const label = httpLabelOf(r);
@@ -406,18 +450,31 @@ async function fetchConvertResultSync(
   form: FormData,
   api: ReturnType<typeof getWebApis>,
 ): Promise<FetchOutcome> {
-  let response: Response;
   try {
-    response = await api.fetch(`${serverUrl}/v1/convert/file`, {
-      method: "POST",
-      body: form,
-      headers: buildAuthHeader(),
-    });
+    return await withRequestTimeout(
+      timeoutMs("syncTimeoutMin", 10),
+      async (signal) => {
+        const response = await api.fetch(`${serverUrl}/v1/convert/file`, {
+          method: "POST",
+          body: form,
+          headers: buildAuthHeader(),
+          signal,
+        });
+        return parseConvertResponse(response);
+      },
+      api.AbortController,
+    );
   } catch (e) {
     Zotero.debug(`${LOG} sync fetch failed: ${(e as Error).message}`);
-    return { ok: false, message: "Server not reachable" };
+    return {
+      ok: false,
+      message: requestFailureMessage(
+        e,
+        "waiting for the conversion",
+        "Sync conversion",
+      ),
+    };
   }
-  return parseConvertResponse(response);
 }
 
 /** Plain sleep — no abort plumbing (see file header note on cancel). */
@@ -449,23 +506,35 @@ async function fetchConvertResultAsync(
 
   // 1. Submit
   const authHeaders = buildAuthHeader();
-  let submitResp: Response;
+  let submitBody: TaskStatusResponse;
   try {
-    submitResp = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
-      method: "POST",
-      body: form,
-      headers: authHeaders,
-    });
+    const submitted = await withRequestTimeout(
+      timeoutMs("asyncUploadTimeoutMin", 5),
+      async (signal) => {
+        const r = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
+          method: "POST",
+          body: form,
+          headers: authHeaders,
+          signal,
+        });
+        if (!r.ok) return { label: httpLabelOf(r) };
+        return {
+          body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
+        };
+      },
+      api.AbortController,
+    );
+    if ("label" in submitted) {
+      return { ok: false, message: `Submit ${submitted.label}` };
+    }
+    submitBody = submitted.body;
   } catch (e) {
     Zotero.debug(`${LOG} async submit failed: ${(e as Error).message}`);
-    return { ok: false, message: "Server not reachable" };
+    return {
+      ok: false,
+      message: requestFailureMessage(e, "uploading the PDF", "Async upload"),
+    };
   }
-  if (!submitResp.ok) {
-    return { ok: false, message: `Submit ${httpLabelOf(submitResp)}` };
-  }
-  const submitBody = (await submitResp
-    .json()
-    .catch(() => ({}))) as TaskStatusResponse;
   const taskId = submitBody.task_id;
   if (!taskId) {
     return { ok: false, message: "Async submit returned no task_id" };
@@ -496,13 +565,27 @@ async function fetchConvertResultAsync(
       };
     }
 
-    let pollResp: Response;
+    let poll:
+      { ok: false; label: string } | { ok: true; status: TaskStatusResponse };
     try {
-      pollResp = await api.fetch(`${serverUrl}/v1/status/poll/${taskId}`, {
-        headers: authHeaders,
-      });
+      poll = await withRequestTimeout(
+        timeoutMs("pollTimeoutSec", 30),
+        async (signal) => {
+          const r = await api.fetch(`${serverUrl}/v1/status/poll/${taskId}`, {
+            headers: authHeaders,
+            signal,
+          });
+          if (!r.ok) return { ok: false as const, label: httpLabelOf(r) };
+          return {
+            ok: true as const,
+            status: (await r.json().catch(() => ({}))) as TaskStatusResponse,
+          };
+        },
+        api.AbortController,
+      );
       consecutiveFailures = 0;
     } catch (e) {
+      // A poll that times out counts as one failed poll, like a network blip.
       consecutiveFailures++;
       Zotero.debug(
         `${LOG} async poll failed (${consecutiveFailures} consecutive): ${(e as Error).message}`,
@@ -528,12 +611,10 @@ async function fetchConvertResultAsync(
       // recover within a few seconds.
       continue;
     }
-    if (!pollResp.ok) {
-      return { ok: false, message: `Poll ${httpLabelOf(pollResp)}` };
+    if (!poll.ok) {
+      return { ok: false, message: `Poll ${poll.label}` };
     }
-    const status = (await pollResp
-      .json()
-      .catch(() => ({}))) as TaskStatusResponse;
+    const status = poll.status;
     const s = status.task_status;
     if (s === "success" || s === "partial_success") break;
     if (s === "failure") {
@@ -551,16 +632,32 @@ async function fetchConvertResultAsync(
   }
 
   // 3. Fetch result
-  let resultResp: Response;
   try {
-    resultResp = await api.fetch(`${serverUrl}/v1/result/${taskId}`, {
-      headers: authHeaders,
-    });
+    return await withRequestTimeout(
+      timeoutMs("asyncResultTimeoutMin", 10),
+      async (signal) => {
+        const r = await api.fetch(`${serverUrl}/v1/result/${taskId}`, {
+          headers: authHeaders,
+          signal,
+        });
+        return parseConvertResponse(r);
+      },
+      api.AbortController,
+    );
   } catch (e) {
     Zotero.debug(`${LOG} async result fetch failed: ${(e as Error).message}`);
-    return { ok: false, message: "Server not reachable while fetching result" };
+    return {
+      ok: false,
+      message:
+        e instanceof RequestTimeoutError
+          ? requestFailureMessage(
+              e,
+              "downloading the result",
+              "Async result download",
+            )
+          : "Server not reachable while fetching result",
+    };
   }
-  return parseConvertResponse(resultResp);
 }
 
 /** Dispatch to sync or async transport based on the useAsyncEndpoint pref. */
@@ -915,20 +1012,33 @@ export async function testServerConnection(
     return { ok: false, message: (e as Error).message };
   }
   try {
-    const r = await api.fetch(`${url}/health`, {
-      method: "GET",
-      headers: buildAuthHeader(),
-    });
-    if (!r.ok) return { ok: false, message: `HTTP ${r.status}` };
-    const body = await r.json().catch(() => ({}) as { status?: string });
-    if ((body as { status?: string }).status === "ok") {
-      return { ok: true, serverUrl: url };
-    }
-    return {
-      ok: false,
-      message: `Unexpected /health body: ${JSON.stringify(body)}`,
-    };
+    return await withRequestTimeout(
+      timeoutMs("healthTimeoutSec", 30),
+      async (signal) => {
+        const r = await api.fetch(`${url}/health`, {
+          method: "GET",
+          headers: buildAuthHeader(),
+          signal,
+        });
+        if (!r.ok) return { ok: false as const, message: `HTTP ${r.status}` };
+        const body = await r.json().catch(() => ({}) as { status?: string });
+        if ((body as { status?: string }).status === "ok") {
+          return { ok: true as const, serverUrl: url };
+        }
+        return {
+          ok: false as const,
+          message: `Unexpected /health body: ${JSON.stringify(body)}`,
+        };
+      },
+      api.AbortController,
+    );
   } catch (e) {
+    if (e instanceof RequestTimeoutError) {
+      return {
+        ok: false,
+        message: `${e.message} waiting for /health (Settings → Advanced → Timeouts → Connection check)`,
+      };
+    }
     return { ok: false, message: (e as Error).message };
   }
 }

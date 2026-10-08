@@ -47,6 +47,17 @@ pref("asyncPollIntervalSec", 5); // poll cadence in seconds (min 1)
 // enough that a dead server doesn't leave the plugin spinning all day.
 pref("asyncMaxWaitMin", 240);
 
+// Request timeouts (all user-adjustable; audit H2). Short calls in seconds,
+// long ones in minutes. A request that exceeds its timeout is cancelled and
+// reported, so a stalled server can't hang a batch.
+pref("healthTimeoutSec", 30); // Test Connection + pre-batch check
+pref("pollTimeoutSec", 30); // one async status poll
+pref("asyncUploadTimeoutMin", 5); // async submit (uploads the PDF)
+pref("asyncResultTimeoutMin", 10); // async result download
+// Sync conversion. docling-serve itself gives up after
+// DOCLING_SERVE_MAX_SYNC_WAIT (default 120 s) and returns a 504.
+pref("syncTimeoutMin", 10);
+
 // Phase 5a: client-side polish
 // Concurrent conversions in a batch (1 = sequential, current behavior).
 // More only helps when paired with the async endpoint AND a server started

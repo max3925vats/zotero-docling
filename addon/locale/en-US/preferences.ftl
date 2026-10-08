@@ -84,6 +84,15 @@ pref-async-poll = Poll interval (s)
 pref-async-max-wait = Max wait (min)
 pref-async-max-wait-help = Client-side ceiling for a single async task. When exceeded, the plugin stops polling and reports an error. docling-serve has no per-task cancel API, so the server-side task may still complete in the background.
 
+pref-timeouts-title = Timeouts
+pref-timeouts-help = How long to wait for docling-serve before giving up on a request. A request that runs past its timeout is cancelled and reported as an error, so a stalled server can't hang a batch.
+pref-health-timeout = Connection check (s)
+pref-poll-timeout = Async status poll (s)
+pref-async-upload-timeout = Async upload (min)
+pref-async-result-timeout = Async result download (min)
+pref-sync-timeout = Sync conversion (min)
+pref-sync-timeout-help = docling-serve stops waiting on its own after DOCLING_SERVE_MAX_SYNC_WAIT (default 120 s). If you raise that on the server, raise this too — or turn on the async endpoint for long conversions.
+
 pref-advanced-title = Advanced
 pref-advanced-help = JSON object whose top-level keys are sent as form fields to docling-serve and override the controls above. Use this for any docling-serve option not exposed elsewhere in this pane. The full schema is documented in the docling-serve OpenAPI surface at /docs on your running server.
 

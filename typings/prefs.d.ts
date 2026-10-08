@@ -31,6 +31,11 @@ declare namespace _ZoteroTypes {
       "useAsyncEndpoint": boolean;
       "asyncPollIntervalSec": number;
       "asyncMaxWaitMin": number;
+      "healthTimeoutSec": number;
+      "pollTimeoutSec": number;
+      "asyncUploadTimeoutMin": number;
+      "asyncResultTimeoutMin": number;
+      "syncTimeoutMin": number;
       "maxConcurrency": number;
       "addFrontmatter": boolean;
       "attachToItem": boolean;

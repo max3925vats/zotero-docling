@@ -499,6 +499,95 @@
     </groupbox>
 
     <!-- ============================================================ -->
+    <!--  Timeouts (all requests to docling-serve)                     -->
+    <!-- ============================================================ -->
+    <groupbox>
+      <label><html:h2 data-l10n-id="pref-timeouts-title"></html:h2></label>
+      <description data-l10n-id="pref-timeouts-help"></description>
+      <hbox align="center">
+        <html:label
+          for="zotero-docling-health-timeout"
+          data-l10n-id="pref-health-timeout"
+          style="min-width: 180px"
+        ></html:label>
+        <html:input
+          type="number"
+          id="zotero-docling-health-timeout"
+          preference="healthTimeoutSec"
+          min="1"
+          max="600"
+          step="1"
+          style="width: 6em"
+        ></html:input>
+      </hbox>
+      <hbox align="center">
+        <html:label
+          for="zotero-docling-poll-timeout"
+          data-l10n-id="pref-poll-timeout"
+          style="min-width: 180px"
+        ></html:label>
+        <html:input
+          type="number"
+          id="zotero-docling-poll-timeout"
+          preference="pollTimeoutSec"
+          min="1"
+          max="600"
+          step="1"
+          style="width: 6em"
+        ></html:input>
+      </hbox>
+      <hbox align="center">
+        <html:label
+          for="zotero-docling-async-upload-timeout"
+          data-l10n-id="pref-async-upload-timeout"
+          style="min-width: 180px"
+        ></html:label>
+        <html:input
+          type="number"
+          id="zotero-docling-async-upload-timeout"
+          preference="asyncUploadTimeoutMin"
+          min="1"
+          max="120"
+          step="1"
+          style="width: 6em"
+        ></html:input>
+      </hbox>
+      <hbox align="center">
+        <html:label
+          for="zotero-docling-async-result-timeout"
+          data-l10n-id="pref-async-result-timeout"
+          style="min-width: 180px"
+        ></html:label>
+        <html:input
+          type="number"
+          id="zotero-docling-async-result-timeout"
+          preference="asyncResultTimeoutMin"
+          min="1"
+          max="120"
+          step="1"
+          style="width: 6em"
+        ></html:input>
+      </hbox>
+      <hbox align="center">
+        <html:label
+          for="zotero-docling-sync-timeout"
+          data-l10n-id="pref-sync-timeout"
+          style="min-width: 180px"
+        ></html:label>
+        <html:input
+          type="number"
+          id="zotero-docling-sync-timeout"
+          preference="syncTimeoutMin"
+          min="1"
+          max="1440"
+          step="1"
+          style="width: 6em"
+        ></html:input>
+      </hbox>
+      <description data-l10n-id="pref-sync-timeout-help"></description>
+    </groupbox>
+
+    <!-- ============================================================ -->
     <!--  Advanced (Tier 4)                                            -->
     <!-- ============================================================ -->
     <groupbox>
