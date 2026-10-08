@@ -160,7 +160,10 @@ async function processPending(): Promise<void> {
         if (!item) return;
         let result: ConvertResult;
         try {
-          result = await convertAttachment(item);
+          // Stop sending new PDFs once shutdown has begun (audit M7).
+          result = addon.data.alive
+            ? await convertAttachment(item)
+            : { status: "skipped", reason: "Plugin is shutting down" };
         } catch (e) {
           result = { status: "error", message: (e as Error).message };
           log(`auto-convert threw for item ${id}: ${(e as Error).message}`);

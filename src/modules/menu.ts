@@ -239,6 +239,8 @@ export async function runBatch(
     toast("Docling", "No PDF attachments in selection", false);
     return false;
   }
+  // The plugin is being disabled, updated or Zotero is quitting.
+  if (!addon.data.alive) return false;
 
   // Re-convert replaces existing .md attachments (the old ones go to the
   // trash once the new conversion is attached). Confirm with the user
@@ -322,7 +324,10 @@ export async function runBatch(
 
       let result: ConvertResult;
       try {
-        result = await convertAttachment(item, { force: opts.force });
+        // Stop sending new PDFs once shutdown has begun (audit M7).
+        result = addon.data.alive
+          ? await convertAttachment(item, { force: opts.force })
+          : { status: "skipped", reason: "Plugin is shutting down" };
       } catch (e) {
         result = { status: "error", message: (e as Error).message };
       }

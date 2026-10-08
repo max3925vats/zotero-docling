@@ -47,11 +47,14 @@ async function shutdown({ id, version, resourceURI, rootURI }, reason) {
     return;
   }
 
-  await Zotero.__addonInstance__?.hooks.onShutdown();
-
-  if (chromeHandle) {
-    chromeHandle.destruct();
-    chromeHandle = null;
+  try {
+    await Zotero.__addonInstance__?.hooks.onShutdown();
+  } finally {
+    // Always release the chrome registration, even if shutdown threw.
+    if (chromeHandle) {
+      chromeHandle.destruct();
+      chromeHandle = null;
+    }
   }
 }
 

@@ -8,8 +8,12 @@ installSetImmediate(_globalThis);
 
 const basicTool = new BasicTool();
 
+// Create the instance unless a live one already exists. An instance with
+// alive === false was left behind by a shutdown that didn't finish; starting
+// up on it would run the old bundle's code, so replace it.
 // @ts-expect-error - Plugin instance is not typed
-if (!basicTool.getGlobal("Zotero")[config.addonInstance]) {
+const existing = basicTool.getGlobal("Zotero")[config.addonInstance];
+if (!existing || existing.data?.alive === false) {
   _globalThis.addon = new Addon();
   defineGlobal("ztoolkit", () => {
     return _globalThis.addon.data.ztoolkit;

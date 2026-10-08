@@ -3,6 +3,10 @@ import { registerMenu, unregisterMenu } from "./modules/menu";
 import { registerNotifier, unregisterNotifier } from "./modules/notifier";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { onZoteroBlur, onZoteroFocus, toast } from "./modules/ui";
+import {
+  attachFocusListeners,
+  detachFocusListeners,
+} from "./modules/windowListeners";
 import { createZToolkit } from "./utils/ztoolkit";
 import { getPref, setPref } from "./utils/prefs";
 
@@ -15,7 +19,6 @@ async function onStartup(): Promise<void> {
 
   initLocale();
   registerPrefsPane();
-  registerMenu();
   registerNotifier();
 
   await Promise.all(
@@ -58,23 +61,37 @@ function maybeShowFirstRunNudge(): void {
   }, 2500);
 }
 
+/** Run one lifecycle step; a failure is logged and never stops the rest. */
+function safely(label: string, step: () => void): void {
+  try {
+    step();
+  } catch (e) {
+    Zotero.debug(
+      `[zotero-docling] ${label} failed (non-fatal): ${(e as Error).message}`,
+    );
+  }
+}
+
 async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // Fresh ztoolkit per window — the toolkit owns DOM lifetime.
   addon.data.ztoolkit = createZToolkit();
   // (Template had insertFTLIfNeeded("...-mainWindow.ftl") here; we don't ship
   // a mainWindow.ftl, so omitting it avoids "Missing resource" log spam.)
 
+  // Menus are inserted into the current main window's document, so they
+  // must be registered per window load. Registering once at startup left a
+  // closed-and-reopened main window (macOS) without them (audit M6).
+  safely("menu registration", registerMenu);
+
   // Blur/focus listeners drive the managed-progress hide-on-blur behaviour
   // (the "stop showing the toast when user switches apps" UX). Re-show on
-  // focus brings the latest state back.
-  try {
-    win.addEventListener("blur", () => onZoteroBlur());
-    win.addEventListener("focus", () => onZoteroFocus());
-  } catch (e) {
-    Zotero.debug(
-      `[zotero-docling] focus listeners failed (non-fatal): ${(e as Error).message}`,
-    );
-  }
+  // focus brings the latest state back. Stored so unload can remove them.
+  safely("focus listeners", () =>
+    attachFocusListeners(win, {
+      onBlur: onZoteroBlur,
+      onFocus: onZoteroFocus,
+    }),
+  );
 }
 
 /**
@@ -90,25 +107,26 @@ function registerPrefsPane(): void {
   });
 }
 
-async function onMainWindowUnload(_win: Window): Promise<void> {
-  ztoolkit.unregisterAll();
-  addon.data.dialog?.window?.close();
+async function onMainWindowUnload(win: Window): Promise<void> {
+  safely("focus listener removal", () => detachFocusListeners(win));
+  safely("menu removal", unregisterMenu);
+  safely("toolkit cleanup", () => ztoolkit.unregisterAll());
+  safely("dialog close", () => addon.data.dialog?.window?.close());
 }
 
 function onShutdown(): void {
-  try {
-    unregisterNotifier();
-  } catch {
-    /* ignore */
-  }
-  try {
-    unregisterMenu();
-  } catch {
-    /* ignore */
-  }
-  ztoolkit.unregisterAll();
-  addon.data.dialog?.window?.close();
+  // First, so running batches stop picking up new items (menu/notifier
+  // check `alive` between items).
   addon.data.alive = false;
+  // Every step runs even if an earlier one throws; previously one throw
+  // skipped the rest, including unregistering the instance (audit M7).
+  safely("notifier removal", unregisterNotifier);
+  safely("focus listener removal", () => {
+    for (const win of Zotero.getMainWindows()) detachFocusListeners(win);
+  });
+  safely("menu removal", unregisterMenu);
+  safely("toolkit cleanup", () => ztoolkit.unregisterAll());
+  safely("dialog close", () => addon.data.dialog?.window?.close());
   // @ts-expect-error - Plugin instance is not typed
   delete Zotero[addon.data.config.addonInstance];
 }
