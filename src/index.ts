@@ -1,6 +1,10 @@
 import { BasicTool } from "zotero-plugin-toolkit";
 import Addon from "./addon";
 import { config } from "../package.json";
+import { installSetImmediate } from "./utils/setImmediate";
+
+// JSZip needs a bare `setImmediate` in our sandbox scope (issue #56).
+installSetImmediate(_globalThis);
 
 const basicTool = new BasicTool();
 
