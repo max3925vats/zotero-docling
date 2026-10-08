@@ -56,6 +56,15 @@ const failure = () =>
 describe("Re-convert (replace)", function () {
   this.timeout(20000);
 
+  // runBatch reads the plugin's sandbox globals (`addon`, `ztoolkit`). The
+  // test bundle runs in a window realm without them, so point them at the
+  // live plugin instance the harness already loaded.
+  before(function () {
+    const g = globalThis as any;
+    g.addon = (Zotero as any)[config.addonInstance];
+    g.ztoolkit = g.addon.data.ztoolkit;
+  });
+
   beforeEach(function () {
     setPref("serverUrl", "http://docling.test");
     setPref("addFrontmatter", false);
