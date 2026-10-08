@@ -24,7 +24,3 @@ updates:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
-      # zotero-plugin-toolkit ships breaking API changes inside minor bumps
-      # while in 5.1.x beta→stable transition (e.g. ztoolkit.Menu API removal).
-      # Re-enable once it stabilises past beta.
-      - dependency-name: "zotero-plugin-toolkit"
