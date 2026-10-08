@@ -76,17 +76,19 @@ describe("request timeouts", function () {
   });
 
   describe("timeout preference defaults", function () {
-    const expected: Record<string, number> = {
-      healthTimeoutSec: 30,
-      pollTimeoutSec: 30,
-      asyncUploadTimeoutMin: 5,
-      asyncResultTimeoutMin: 10,
-      syncTimeoutMin: 10,
-    };
-    for (const [key, value] of Object.entries(expected)) {
-      it(`${key} defaults to ${value}`, function () {
-        assert.strictEqual(Zotero.Prefs.get(`${PREFIX}.${key}`, true), value);
-      });
-    }
+    it("ship the agreed defaults", function () {
+      const expected: Record<string, number> = {
+        healthTimeoutSec: 30,
+        pollTimeoutSec: 30,
+        asyncUploadTimeoutMin: 5,
+        asyncResultTimeoutMin: 10,
+        syncTimeoutMin: 10,
+      };
+      const actual: Record<string, unknown> = {};
+      for (const key of Object.keys(expected)) {
+        actual[key] = Zotero.Prefs.get(`${PREFIX}.${key}`, true);
+      }
+      assert.deepEqual(actual, expected);
+    });
   });
 });
