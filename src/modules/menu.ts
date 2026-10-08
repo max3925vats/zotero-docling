@@ -51,9 +51,33 @@ const TOOLS_MENU_ID = "zotero-docling-tools-menu";
  * returns it, but after a hot reload we only have our own IDs, so derive it.
  */
 function registeredKey(menuID: string): string {
-  const raw = `${addon.data.config.addonID}-${menuID}`;
-  const css = (globalThis as any).CSS ?? (Zotero as any).getMainWindow?.()?.CSS;
-  return css?.escape ? css.escape(raw) : raw;
+  // Equivalent to CSS.escape for this ASCII, letter-initial string, without
+  // needing a window (none may be open during a reload on macOS).
+  return `${addon.data.config.addonID}-${menuID}`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    "\\$&",
+  );
+}
+
+// Keys Zotero returned for our registrations (what unregisterMenu expects).
+let registeredKeys: string[] = [];
+
+/**
+ * registerMenu, retrying once after clearing a leftover registration with
+ * the same key (a previous copy of the plugin after a hot reload).
+ */
+function registerOnce(options: {
+  menuID: string;
+  [key: string]: unknown;
+}): string | false {
+  const MenuManager = (Zotero as any).MenuManager;
+  let key = MenuManager.registerMenu(options) as string | false;
+  if (!key) {
+    MenuManager.unregisterMenu(registeredKey(options.menuID));
+    key = MenuManager.registerMenu(options) as string | false;
+  }
+  if (key) registeredKeys.push(key);
+  return key;
 }
 
 // Re-exports — used by other modules (markdownZipExport.ts) that need to
@@ -428,17 +452,17 @@ export async function runBatch(
 //  Click handlers
 // ---------------------------------------------------------------------------
 
-async function onConvertClick(): Promise<void> {
+async function onConvertClick(items?: Zotero.Item[]): Promise<void> {
   log("onConvertClick");
-  const selection = getSelectedItems();
+  const selection = items ?? getSelectedItems();
   const pdfs = resolvePdfsToConvert(selection);
   log(`convert: selection=${selection.length} → pdfs=${pdfs.length}`);
   await runBatch(pdfs, { force: false, menuLabel: "Docling" });
 }
 
-async function onReconvertClick(): Promise<void> {
+async function onReconvertClick(items?: Zotero.Item[]): Promise<void> {
   log("onReconvertClick");
-  const selection = getSelectedItems();
+  const selection = items ?? getSelectedItems();
   const pdfs = resolvePdfsToConvert(selection);
   log(`reconvert: selection=${selection.length} → pdfs=${pdfs.length}`);
   await runBatch(pdfs, { force: true, menuLabel: "Docling (replace)" });
@@ -456,12 +480,14 @@ async function onReconvertClick(): Promise<void> {
  * main window.
  */
 export function registerMenus(): void {
-  unregisterMenus(); // idempotent across hot reloads
+  unregisterMenus(); // idempotent
   const pluginID = addon.data.config.addonID;
-  const MenuManager = (Zotero as any).MenuManager;
+  // The items of the window the menu was opened in. Visibility (onShowing)
+  // and the action (onCommand) both use these, so they can't disagree when
+  // several main windows have different selections.
   const items = (ctx: { items?: Zotero.Item[] }) => ctx.items ?? [];
 
-  const itemKey = MenuManager.registerMenu({
+  const itemKey = registerOnce({
     menuID: ITEM_MENU_ID,
     pluginID,
     target: "main/library/item",
@@ -471,7 +497,7 @@ export function registerMenus(): void {
         l10nID: getLocaleID("menuitem-convert"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(shouldShowConvert(items(ctx))),
-        onCommand: () => void onConvertClick(),
+        onCommand: (_e: Event, ctx: any) => void onConvertClick(items(ctx)),
       },
       {
         // Only when there's already a matching .md to replace; otherwise
@@ -480,7 +506,7 @@ export function registerMenus(): void {
         l10nID: getLocaleID("menuitem-reconvert"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(shouldShowReconvert(items(ctx))),
-        onCommand: () => void onReconvertClick(),
+        onCommand: (_e: Event, ctx: any) => void onReconvertClick(items(ctx)),
       },
       {
         // Shown whenever the selection resolves to ≥1 PDF; the export
@@ -489,20 +515,22 @@ export function registerMenus(): void {
         l10nID: getLocaleID("menuitem-export-md-zip"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(shouldShowConvert(items(ctx))),
-        onCommand: () => void onExportMarkdownZipClick("selection"),
+        onCommand: (_e: Event, ctx: any) =>
+          void onExportMarkdownZipClick("selection", items(ctx)),
       },
       {
         menuType: "menuitem",
         l10nID: getLocaleID("menuitem-remove-images"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(resolveMdTargets(items(ctx)).length > 0),
-        onCommand: () => void onRemoveImagesClick("selection"),
+        onCommand: (_e: Event, ctx: any) =>
+          void onRemoveImagesClick("selection", items(ctx)),
       },
     ],
   });
 
   // Tools menu: reachable without a selection.
-  const toolsKey = MenuManager.registerMenu({
+  const toolsKey = registerOnce({
     menuID: TOOLS_MENU_ID,
     pluginID,
     target: "main/menubar/tools",
@@ -526,13 +554,13 @@ export function registerMenus(): void {
 /** Remove our MenuManager registrations (Zotero also does this on disable). */
 export function unregisterMenus(): void {
   const MenuManager = (Zotero as any).MenuManager;
-  for (const id of [ITEM_MENU_ID, TOOLS_MENU_ID]) {
+  // Must be the keys Zotero returned; the bare menuID silently does nothing.
+  for (const key of registeredKeys) {
     try {
-      // Must be the namespaced key; the bare menuID silently does nothing,
-      // and re-registering after a reload then fails as a duplicate.
-      MenuManager?.unregisterMenu(registeredKey(id));
+      MenuManager?.unregisterMenu(key);
     } catch {
-      /* not registered */
+      /* already gone */
     }
   }
+  registeredKeys = [];
 }

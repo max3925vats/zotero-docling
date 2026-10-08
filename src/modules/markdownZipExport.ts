@@ -317,9 +317,12 @@ async function buildZip(rows: ZipRow[]): Promise<BuildResult> {
  */
 export async function onExportMarkdownZipClick(
   source: "selection" | "tools",
+  // Items from the menu's own context (the window it was opened in); the
+  // Tools menu has none and uses the active pane's selection.
+  items?: Zotero.Item[],
 ): Promise<void> {
   log(`export click source=${source}`);
-  const selection = getSelectedItems();
+  const selection = items ?? getSelectedItems();
   const pdfs = resolvePdfsToConvert(selection);
   if (pdfs.length === 0) {
     toast("Docling", getString("zip-select-first"), false);

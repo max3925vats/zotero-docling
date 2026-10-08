@@ -14,16 +14,15 @@ import {
 } from "./_zoteroItems";
 
 // Audit M6/M7: window listeners stacked up on every load and were never
-// removed; menus were registered once at startup, so a main window closed
-// and reopened (macOS) came back without them; one throwing shutdown step
-// skipped the rest; and batches kept converting after shutdown.
+// removed; one throwing shutdown step skipped the rest; and batches kept
+// converting after shutdown. (Menus go through Zotero.MenuManager since
+// v0.5.0 — see menuManager.test.ts.)
 
 /** Put the live plugin's own UI back after a test drove the test copy. */
 async function restoreLivePlugin(): Promise<void> {
   const live = (Zotero as any)[config.addonInstance];
   for (const win of Zotero.getMainWindows()) {
-    // Unload first: the live copy remembers it already registered this
-    // window and would otherwise skip re-adding the items we removed.
+    // Re-attach the live copy's window listeners (and Fluent strings).
     await live.hooks.onMainWindowUnload(win);
     await live.hooks.onMainWindowLoad(win);
   }
@@ -74,11 +73,17 @@ describe("lifecycle", function () {
       live.data.alive = true;
       delete live.data.dialog;
       (globalThis as any).addon = live;
-      registerMenus(); // shutdown unregistered them from Zotero.MenuManager
+      // Hand the menus back to the live plugin, so later tests (and its own
+      // handlers) use the real build rather than this test copy.
+      live.hooks.registerMenus();
       await restoreLivePlugin();
     });
 
     it("finishes every step even when one of them throws", async function () {
+      // Take over the menus with this test copy (exercises the retry when the
+      // key is still held, as after a hot reload), so its shutdown has
+      // registrations of its own to remove.
+      registerMenus();
       live.data.dialog = {
         window: {
           close() {

@@ -148,9 +148,11 @@ function confirmRemoveImages(count: number): boolean {
  */
 export async function onRemoveImagesClick(
   source: "selection" | "tools",
+  // See onExportMarkdownZipClick: context items when there are some.
+  items?: Zotero.Item[],
 ): Promise<void> {
   log(`remove-images click source=${source}`);
-  const targets = resolveMdTargets(getSelectedItems());
+  const targets = resolveMdTargets(items ?? getSelectedItems());
   if (targets.length === 0) {
     toast("Docling", getString("remove-images-select-first"), false);
     return;

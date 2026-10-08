@@ -152,6 +152,9 @@ async function onPrefsEvent(
 }
 
 export default {
+  // Re-register menus (used by tests to restore the live plugin's menus
+  // after exercising shutdown).
+  registerMenus,
   onStartup,
   onShutdown,
   onMainWindowLoad,
