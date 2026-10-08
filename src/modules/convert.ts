@@ -86,6 +86,14 @@ export function buildAuthHeader(): Record<string, string> {
   return {};
 }
 
+// Test seam: in-Zotero tests swap `fetch` for a scripted stand-in for
+// docling-serve so conversion paths can be exercised without a server.
+// Production code never sets this.
+let fetchOverrideForTests: typeof fetch | null = null;
+export function setFetchOverrideForTests(fn: typeof fetch | null): void {
+  fetchOverrideForTests = fn;
+}
+
 /**
  * Z9's plugin sandbox exposes some Web APIs as bare globals (e.g. fetch) but
  * not others (e.g. FormData, Blob). Prefer bare globals when present, fall
@@ -103,7 +111,10 @@ export function getWebApis(): {
 
   const FormDataCtor = g.FormData ?? win?.FormData;
   const BlobCtor = g.Blob ?? win?.Blob;
-  const fetchFn = g.fetch ?? (win?.fetch ? win.fetch.bind(win) : undefined);
+  const fetchFn =
+    fetchOverrideForTests ??
+    g.fetch ??
+    (win?.fetch ? win.fetch.bind(win) : undefined);
 
   if (!FormDataCtor || !BlobCtor || !fetchFn) {
     throw new Error(
