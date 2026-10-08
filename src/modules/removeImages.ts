@@ -15,6 +15,7 @@
 
 import { toast } from "./ui";
 import { getSelectedItems } from "./menu";
+import { getString } from "../utils/locale";
 import {
   busyMessage,
   isBatchRunning,
@@ -118,8 +119,8 @@ function confirmRemoveImages(count: number): boolean {
     (Zotero as any).getActiveZoteroPane?.()?.document?.defaultView ??
     null;
 
-  const title = "Remove images from markdown?";
-  const body = `This rewrites ${count} markdown attachment${count === 1 ? "" : "s"} in place, replacing every embedded image with a small <!-- image --> placeholder.\n\nThe image data is removed for good — re-convert the PDF if you ever want it back.`;
+  const title = getString("remove-images-confirm-title");
+  const body = `${getString("remove-images-confirm-body", { args: { count } })}\n\n${getString("remove-images-confirm-warning")}`;
 
   let pressed: number;
   try {
@@ -128,7 +129,7 @@ function confirmRemoveImages(count: number): boolean {
       title,
       body,
       flags,
-      "Remove images", // button 0
+      getString("remove-images-confirm-button"), // button 0
       null, // button 1 — title comes from CANCEL flag
       null,
       null,
@@ -151,11 +152,7 @@ export async function onRemoveImagesClick(
   log(`remove-images click source=${source}`);
   const targets = resolveMdTargets(getSelectedItems());
   if (targets.length === 0) {
-    toast(
-      "Docling",
-      "Select items with converted markdown (or .md attachments) first.",
-      false,
-    );
+    toast("Docling", getString("remove-images-select-first"), false);
     return;
   }
 
@@ -223,12 +220,27 @@ export async function onRemoveImagesClick(
   }
 
   const detailParts: string[] = [];
-  if (untouched > 0) detailParts.push(`${untouched} had no images`);
-  if (failed > 0) detailParts.push(`${failed} failed`);
+  if (untouched > 0) {
+    detailParts.push(
+      getString("remove-images-untouched", { args: { count: untouched } }),
+    );
+  }
+  if (failed > 0) {
+    detailParts.push(
+      getString("remove-images-failed", { args: { count: failed } }),
+    );
+  }
   const detail = detailParts.length > 0 ? ` — ${detailParts.join(", ")}` : "";
   const summary =
     changed > 0
-      ? `Replaced ${imagesReplaced} image${imagesReplaced === 1 ? "" : "s"} in ${changed} file${changed === 1 ? "" : "s"}, saving ${formatBytes(bytesSaved)}${detail}`
-      : `No images found in ${targets.length} markdown file${targets.length === 1 ? "" : "s"}${detail}`;
+      ? getString("remove-images-done", {
+          args: {
+            images: imagesReplaced,
+            files: changed,
+            saved: formatBytes(bytesSaved),
+          },
+        }) + detail
+      : getString("remove-images-none", { args: { count: targets.length } }) +
+        detail;
   toast("Docling", summary, failed === 0);
 }

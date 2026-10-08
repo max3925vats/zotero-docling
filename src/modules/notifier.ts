@@ -9,6 +9,7 @@
 // observer returns immediately and nothing happens.
 
 import { getPref } from "../utils/prefs";
+import { getString } from "../utils/locale";
 import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import {
   convertAttachment,
@@ -123,8 +124,8 @@ async function processPending(): Promise<void> {
       if (!deferredToastShown) {
         const n = pendingIDs.size;
         toast(
-          "Docling auto-convert",
-          `Queued ${n} PDF${n === 1 ? "" : "s"} — will start after the current batch finishes`,
+          getString("autoconvert-title"),
+          getString("autoconvert-queued", { args: { count: n } }),
           true,
         );
         deferredToastShown = true;
@@ -157,7 +158,6 @@ async function processPending(): Promise<void> {
         // (they used to be lost until the user converted them by hand).
         preflightFailures++;
         const n = ids.length;
-        const pdfs = `${n} PDF${n === 1 ? "" : "s"}`;
         if (preflightFailures <= PREFLIGHT_RETRIES) {
           for (const id of ids) pendingIDs.add(id);
           // Replace any timer armed meanwhile, so retries never multiply.
@@ -170,16 +170,16 @@ async function processPending(): Promise<void> {
           );
           if (preflightFailures === 1) {
             toast(
-              "Docling auto-convert",
-              `docling-serve isn't running — will retry ${pdfs} for a few minutes`,
+              getString("autoconvert-title"),
+              getString("autoconvert-retrying", { args: { count: n } }),
               false,
             );
           }
         } else {
           preflightFailures = 0;
           toast(
-            "Docling auto-convert",
-            `Skipped ${pdfs} — docling-serve still isn't running`,
+            getString("autoconvert-title"),
+            getString("autoconvert-gave-up", { args: { count: n } }),
             false,
           );
         }
@@ -246,7 +246,7 @@ async function processPending(): Promise<void> {
             ? Array.from(skipReasons).slice(0, 2).join("\n")
             : undefined;
     toast(
-      "Docling auto-convert",
+      getString("autoconvert-title"),
       detail ? `${summary}\n${detail}` : summary,
       failed === 0,
     );

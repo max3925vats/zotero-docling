@@ -7,6 +7,8 @@
 // Acquire is synchronous, so the check-and-set can't be split by an `await`.
 // Callers must release in a `finally`.
 
+import { getString } from "./locale";
+
 let holder: string | null = null;
 
 /** Take the lock. Returns false (and changes nothing) if it is held. */
@@ -26,11 +28,7 @@ export function isBatchRunning(): boolean {
 
 /** What to tell a user who was refused because the lock is held. */
 export function busyMessage(): string {
-  if (holder === "auto-convert") {
-    return "Auto-convert is running (or checking the server) — try again in a moment";
-  }
-  if (holder === "remove-images") {
-    return "Remove Images is running — try again in a moment";
-  }
-  return "A conversion batch is already running — wait for it to finish";
+  if (holder === "auto-convert") return getString("busy-auto-convert");
+  if (holder === "remove-images") return getString("busy-remove-images");
+  return getString("busy-batch");
 }

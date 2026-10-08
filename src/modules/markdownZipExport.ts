@@ -17,6 +17,7 @@ import JSZip from "jszip";
 
 import { toast } from "./ui";
 import { runBatch, resolvePdfsToConvert, getSelectedItems } from "./menu";
+import { getString } from "../utils/locale";
 import { findMatchingMdChild, getLocalFilePath } from "../utils/zotero";
 
 const LOG = "[Docling/zip]";
@@ -167,8 +168,8 @@ function promptMissingMd(missing: number, total: number): MissingMdChoice {
     (Zotero as any).getActiveZoteroPane?.()?.document?.defaultView ??
     null;
 
-  const title = "Export markdown to .zip";
-  const body = `${missing} of ${total} selected PDF${total === 1 ? "" : "s"} have no Docling markdown yet.\n\nHow would you like to proceed?`;
+  const title = getString("zip-missing-title");
+  const body = `${getString("zip-missing-body", { args: { missing, total } })}\n\n${getString("zip-missing-question")}`;
 
   let pressed: number;
   try {
@@ -177,8 +178,8 @@ function promptMissingMd(missing: number, total: number): MissingMdChoice {
       title,
       body,
       flags,
-      "Skip and export",
-      "Convert first",
+      getString("zip-skip-and-export"),
+      getString("zip-convert-first"),
       null,
       null,
       { value: false },
@@ -231,8 +232,10 @@ async function promptSavePath(defaultName: string): Promise<string | null> {
     const ok =
       prompt?.confirm?.(
         win,
-        "Replace existing file?",
-        `${PathUtils.filename(withExt)} already exists. Replace it?`,
+        getString("zip-replace-title"),
+        getString("zip-replace-body", {
+          args: { name: PathUtils.filename(withExt) },
+        }),
       ) ?? false;
     if (!ok) return null;
   }
@@ -319,21 +322,13 @@ export async function onExportMarkdownZipClick(
   const selection = getSelectedItems();
   const pdfs = resolvePdfsToConvert(selection);
   if (pdfs.length === 0) {
-    toast(
-      "Docling",
-      "Select one or more items (or PDF attachments) to export.",
-      false,
-    );
+    toast("Docling", getString("zip-select-first"), false);
     return;
   }
 
   let rows = planExport(pdfs);
   if (rows.length === 0) {
-    toast(
-      "Docling",
-      "Selected PDFs have no parent items — cannot export.",
-      false,
-    );
+    toast("Docling", getString("zip-no-parents"), false);
     return;
   }
 
@@ -354,11 +349,7 @@ export async function onExportMarkdownZipClick(
       rows = planExport(pdfs);
       const stillMissing = rows.filter((r) => !r.mdChild).length;
       if (stillMissing === rows.length) {
-        toast(
-          "Docling",
-          "Conversion produced no markdown — nothing to export.",
-          false,
-        );
+        toast("Docling", getString("zip-nothing-converted"), false);
         return;
       }
     }
@@ -375,32 +366,53 @@ export async function onExportMarkdownZipClick(
 
   toast(
     "Docling",
-    `Building zip with ${rows.length} item${rows.length === 1 ? "" : "s"}…`,
+    getString("zip-building", { args: { count: rows.length } }),
     true,
   );
   let built: BuildResult;
   try {
     built = await buildZip(rows);
   } catch (e) {
-    toast("Docling", `Failed to build zip: ${(e as Error).message}`, false);
+    toast(
+      "Docling",
+      getString("zip-build-failed", {
+        args: { message: (e as Error).message },
+      }),
+      false,
+    );
     return;
   }
 
   try {
     await IOUtils.write(outPath, built.zipBytes);
   } catch (e) {
-    toast("Docling", `Failed to write zip: ${(e as Error).message}`, false);
+    toast(
+      "Docling",
+      getString("zip-write-failed", {
+        args: { message: (e as Error).message },
+      }),
+      false,
+    );
     return;
   }
 
   const detailParts: string[] = [];
-  if (built.skipped > 0) detailParts.push(`${built.skipped} skipped (no .md)`);
-  if (built.failedReads > 0)
-    detailParts.push(`${built.failedReads} unreadable`);
+  if (built.skipped > 0) {
+    detailParts.push(
+      getString("zip-skipped-no-md", { args: { count: built.skipped } }),
+    );
+  }
+  if (built.failedReads > 0) {
+    detailParts.push(
+      getString("zip-unreadable", { args: { count: built.failedReads } }),
+    );
+  }
   const detail = detailParts.length > 0 ? ` — ${detailParts.join(", ")}` : "";
   toast(
     "Docling",
-    `Exported ${built.exported} markdown file${built.exported === 1 ? "" : "s"} to ${outPath}${detail}`,
+    getString("zip-exported", {
+      args: { count: built.exported, path: outPath },
+    }) + detail,
     built.exported > 0,
   );
 }
