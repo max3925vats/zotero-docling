@@ -12,6 +12,8 @@ import {
   getLocalFilePath,
   isConvertiblePdf,
   mdNameForPdf,
+  findMatchingMdChild,
+  trashItem,
 } from "../utils/zotero";
 import {
   buildFrontmatter,
@@ -633,6 +635,11 @@ async function convertAttachmentInner(
     return { status: "skipped", reason: "Markdown attachment already exists" };
   }
 
+  // Re-convert: remember the current .md now, but leave it in place until the
+  // replacement is attached — a failed conversion must not cost the user
+  // their existing markdown (audit H3).
+  const previousMd = force ? findMatchingMdChild(parentItemID, filename) : null;
+
   // --- 4. Read bytes ---
   let pdfBytes: Uint8Array;
   try {
@@ -767,6 +774,17 @@ async function convertAttachmentInner(
       );
     }
     attachmentID = newAttachment.id;
+
+    if (previousMd && previousMd.id !== newAttachment.id) {
+      try {
+        await trashItem(previousMd);
+      } catch (e) {
+        // The new .md is attached; a leftover old copy is untidy, not lost.
+        Zotero.debug(
+          `${LOG} trashing previous .md failed (non-fatal): ${(e as Error).message}`,
+        );
+      }
+    }
   }
 
   // --- 11. Export to filesystem folder (if configured) ---

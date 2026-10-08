@@ -61,8 +61,10 @@ You need both.
   containing PDFs, or any mix of the two) → "Convert with Docling" → Markdown
   appears as a sibling attachment.
 - **Re-convert (replace)**: right-click → "Re-convert with Docling (replace)"
-  deletes the existing `.md` sibling and runs conversion again. A confirmation
-  dialog guards the destructive action (toggleable in prefs).
+  runs conversion again and, once the new `.md` is attached, moves the old one
+  to Zotero's trash (recoverable). If conversion fails, the old `.md` is left
+  untouched. A confirmation dialog guards the replacement (toggleable in
+  prefs).
 - **Auto-convert on import** (opt-in): newly imported PDFs are converted
   automatically with a 3-second debounce that handles bulk imports gracefully.
 - **Optional authentication**: Bearer token / Basic auth / Custom header

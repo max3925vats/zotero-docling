@@ -107,22 +107,15 @@ export function findMatchingMdChild(
 }
 
 /**
- * Delete the matching .md child if present. Used by the "Re-convert
- * (replace)" path so that a fresh conversion can attach cleanly without
- * stacking a second .md sibling.
+ * Move an item to Zotero's trash (recoverable), never a permanent erase.
+ * Used by Re-convert to retire the previous .md only after its replacement
+ * has been attached (audit H3).
  */
-export async function removeMatchingMdChild(
-  parentItemID: number,
-  pdfFilename: string,
-): Promise<boolean> {
-  const child = findMatchingMdChild(parentItemID, pdfFilename);
-  if (!child) return false;
-  try {
-    await withDbLock(() => child.eraseTx());
-    return true;
-  } catch {
-    return false;
-  }
+export async function trashItem(item: Zotero.Item): Promise<void> {
+  await withDbLock(async () => {
+    item.deleted = true;
+    await item.saveTx();
+  });
 }
 
 /** Convenience: true iff item is a locally-present PDF attachment with a parent. */

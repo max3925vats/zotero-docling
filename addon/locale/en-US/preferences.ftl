@@ -29,7 +29,7 @@ pref-max-concurrency-help = How many PDFs to convert in parallel within one batc
 pref-notify-on-complete =
     .label = OS notification when a batch finishes (only if Zotero isn't focused)
 pref-confirm-reconvert =
-    .label = Confirm before "Re-convert (replace)" deletes existing markdown
+    .label = Confirm before "Re-convert (replace)" replaces existing markdown
 
 pref-output-title = Output
 pref-attach-to-item =

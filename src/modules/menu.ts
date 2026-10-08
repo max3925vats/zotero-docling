@@ -30,7 +30,6 @@ import {
 import {
   getPDFAttachments,
   getLocalFilePath,
-  removeMatchingMdChild,
   findMatchingMdChild,
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
@@ -166,7 +165,7 @@ function confirmReconvertWithUser(count: number): boolean {
     null;
 
   const title = "Re-convert with Docling?";
-  const body = `This will delete the existing markdown attachment${count === 1 ? "" : "s"} on ${count} selected PDF${count === 1 ? "" : "s"} and run conversion again. Any manual edits to the existing markdown will be lost.`;
+  const body = `This will convert ${count} selected PDF${count === 1 ? "" : "s"} again and replace the existing markdown attachment${count === 1 ? "" : "s"}. The old markdown is moved to the Zotero trash once the new one is attached, and is kept if conversion fails.`;
   const checkLabel = "Don't ask again";
   const check = { value: false };
 
@@ -240,8 +239,8 @@ export async function runBatch(
     return;
   }
 
-  // Re-convert is destructive — it deletes existing .md attachments before
-  // running a fresh conversion. Confirm with the user unless they've opted
+  // Re-convert replaces existing .md attachments (the old ones go to the
+  // trash once the new conversion is attached). Confirm with the user unless they've opted
   // out via the "Don't ask again" checkbox. Confirm BEFORE setting any
   // in-flight state so cancelling is a clean no-op.
   if (opts.force && ((getPref("confirmReconvert") ?? true) as boolean)) {
@@ -307,16 +306,6 @@ export async function runBatch(
   };
 
   const runOne = async (item: Zotero.Item): Promise<void> => {
-    // For re-convert, delete the matching existing .md attachment first so
-    // the fresh conversion doesn't stack a second sibling.
-    if (opts.force) {
-      const parentID = item.parentItemID;
-      const pdfPath = await getLocalFilePath(item);
-      if (parentID && pdfPath) {
-        await removeMatchingMdChild(parentID, PathUtils.filename(pdfPath));
-      }
-    }
-
     // Per-item progress: show this PDF's filename while it's working.
     let displayName = "";
     try {
