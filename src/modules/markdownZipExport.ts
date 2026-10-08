@@ -224,12 +224,7 @@ async function promptSavePath(defaultName: string): Promise<string | null> {
   // for that exact name, so check the real target ourselves before
   // IOUtils.write silently replaces it.
   const withExt = `${picked}.zip`;
-  let exists = false;
-  try {
-    exists = await IOUtils.exists(withExt);
-  } catch {
-    exists = false;
-  }
+  const exists = await IOUtils.exists(withExt).catch(() => false);
   if (exists) {
     const prompt = (globalThis as any).Services?.prompt;
     const win = (Zotero as any).getMainWindow?.() ?? null;
