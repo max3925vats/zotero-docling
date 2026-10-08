@@ -15,6 +15,7 @@
 
 import { toast } from "./ui";
 import { getSelectedItems } from "./menu";
+import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import {
   getLocalFilePath,
   findMatchingMdChild,
@@ -154,7 +155,11 @@ export async function onRemoveImagesClick(
 
   // Don't interleave with a running conversion batch — it may be writing
   // the same .md attachments we're about to rewrite.
-  if (addon.data.batchInFlight) {
+  if (!confirmRemoveImages(targets.length)) return;
+
+  // Hold the batch lock for the whole rewrite: a conversion (manual or
+  // auto) may otherwise write the same .md files concurrently (audit M4).
+  if (!tryAcquireBatch("remove-images")) {
     toast(
       "Docling",
       "A conversion batch is already running — wait for it to finish",
@@ -163,47 +168,49 @@ export async function onRemoveImagesClick(
     return;
   }
 
-  if (!confirmRemoveImages(targets.length)) return;
-
   let changed = 0;
   let imagesReplaced = 0;
   let bytesSaved = 0;
   let untouched = 0;
   let failed = 0;
 
-  for (const md of targets) {
-    const path = await getLocalFilePath(md);
-    if (!path) {
-      log(`md ${md.id} has no local file (cloud-only?) — skipping`);
-      failed++;
-      continue;
+  try {
+    for (const md of targets) {
+      const path = await getLocalFilePath(md);
+      if (!path) {
+        log(`md ${md.id} has no local file (cloud-only?) — skipping`);
+        failed++;
+        continue;
+      }
+      let before: string;
+      try {
+        before = await IOUtils.readUTF8(path);
+      } catch (e) {
+        log(`failed to read ${path}: ${(e as Error).message}`);
+        failed++;
+        continue;
+      }
+      const { markdown: after, replaced } = stripImagesFromMarkdown(before);
+      if (replaced === 0) {
+        untouched++;
+        continue;
+      }
+      try {
+        await IOUtils.writeUTF8(path, after);
+      } catch (e) {
+        log(`failed to write ${path}: ${(e as Error).message}`);
+        failed++;
+        continue;
+      }
+      changed++;
+      imagesReplaced += replaced;
+      // Embedded images are base64 (ASCII), so UTF-16 code-unit length is a
+      // faithful byte estimate for the part we removed.
+      bytesSaved += Math.max(0, before.length - after.length);
+      log(`stripped ${replaced} image(s) from ${path}`);
     }
-    let before: string;
-    try {
-      before = await IOUtils.readUTF8(path);
-    } catch (e) {
-      log(`failed to read ${path}: ${(e as Error).message}`);
-      failed++;
-      continue;
-    }
-    const { markdown: after, replaced } = stripImagesFromMarkdown(before);
-    if (replaced === 0) {
-      untouched++;
-      continue;
-    }
-    try {
-      await IOUtils.writeUTF8(path, after);
-    } catch (e) {
-      log(`failed to write ${path}: ${(e as Error).message}`);
-      failed++;
-      continue;
-    }
-    changed++;
-    imagesReplaced += replaced;
-    // Embedded images are base64 (ASCII), so UTF-16 code-unit length is a
-    // faithful byte estimate for the part we removed.
-    bytesSaved += Math.max(0, before.length - after.length);
-    log(`stripped ${replaced} image(s) from ${path}`);
+  } finally {
+    releaseBatch();
   }
 
   const detailParts: string[] = [];

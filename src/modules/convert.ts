@@ -152,7 +152,7 @@ export type ConvertResult =
  * duplicate — otherwise docling-serve happily processes both and we end
  * up with two .md siblings.
  *
- * Why this exists alongside `addon.data.batchInFlight`: the batch flag
+ * Why this exists alongside the batch lock (utils/batchLock.ts): the lock
  * prevents two batches starting simultaneously at the orchestrator level
  * (one click → one batch). This per-item set provides defence-in-depth
  * against future call paths that bypass the batch orchestrator and call

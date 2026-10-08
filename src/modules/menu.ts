@@ -33,6 +33,7 @@ import {
   findMatchingMdChild,
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
+import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { truncateMiddle, formatDuration } from "../utils/format";
@@ -210,12 +211,12 @@ function confirmReconvertWithUser(count: number): boolean {
  *
  * Exported so the markdown zip export "Convert first" path can drive the same
  * orchestrator from outside menu.ts without duplicating the progress-window
- * + batchInFlight + concurrency + tag logic.
+ * + batch lock + concurrency + tag logic.
  */
 export async function runBatch(
   pdfs: Zotero.Item[],
   opts: { force: boolean; menuLabel: string },
-): Promise<void> {
+): Promise<boolean> {
   // Re-convert (force) only acts on items that actually have a matching .md
   // to replace — otherwise the menu wording "(replace)" would mislead users
   // into thinking selection without existing .md was supposed to be skipped.
@@ -230,62 +231,35 @@ export async function runBatch(
     });
     if (pdfs.length === 0) {
       toast("Docling", "No matching .md files to replace in selection", false);
-      return;
+      return false;
     }
   }
 
   if (pdfs.length === 0) {
     toast("Docling", "No PDF attachments in selection", false);
-    return;
+    return false;
   }
 
   // Re-convert replaces existing .md attachments (the old ones go to the
-  // trash once the new conversion is attached). Confirm with the user unless they've opted
-  // out via the "Don't ask again" checkbox. Confirm BEFORE setting any
-  // in-flight state so cancelling is a clean no-op.
+  // trash once the new conversion is attached). Confirm with the user
+  // unless they've opted out via the "Don't ask again" checkbox. Confirm
+  // BEFORE taking the lock so cancelling is a clean no-op.
   if (opts.force && ((getPref("confirmReconvert") ?? true) as boolean)) {
-    if (!confirmReconvertWithUser(pdfs.length)) return;
+    if (!confirmReconvertWithUser(pdfs.length)) return false;
   }
 
-  // Only one batch at a time. A second click while a batch is running
-  // would otherwise spawn a parallel orchestrator that fights over the
-  // shared managed-progress window.
-  //
-  // The flag MUST be set synchronously before the first `await` — otherwise
-  // two rapid clicks both pass the check, both await the preflight, and
-  // both proceed to spawn a batch.
-  if (addon.data.batchInFlight) {
+  // Only one batch at a time (menu, auto-convert and Remove Images share
+  // the lock). Acquire is synchronous, so two rapid clicks can't both pass.
+  if (!tryAcquireBatch("menu")) {
     toast(
       "Docling",
       "A conversion batch is already running — wait for it to finish",
       false,
     );
-    return;
+    return false;
   }
-  addon.data.batchInFlight = true;
-
-  // Pre-flight: avoid N×wall-of-error toasts when docling-serve isn't running.
-  if (!(await preflightServer())) {
-    addon.data.batchInFlight = false;
-    toast("Docling", "docling-serve isn't running — start it and retry", false);
-    return;
-  }
-
-  const limit = Math.max(
-    1,
-    Math.min(8, Number(getPref("maxConcurrency") ?? 1) || 1),
-  );
-  const limiter = new ConcurrencyLimiter(limit);
 
   const total = pdfs.length;
-  // Hide the noisy "concurrency=1" suffix when the user is on the default —
-  // only surface it when they've actually opted into parallelism.
-  const concurrencyNote = limit > 1 ? ` · concurrency=${limit}` : "";
-  startManagedProgress(
-    `${opts.menuLabel}: converting…`,
-    `${total} PDF${total === 1 ? "" : "s"}${concurrencyNote}`,
-  );
-
   let done = 0;
   let ok = 0;
   let skipped = 0;
@@ -294,52 +268,86 @@ export async function runBatch(
   const skipReasons = new Set<string>();
   const batchResults: Array<{ item: Zotero.Item; result: ConvertResult }> = [];
 
-  // Update headline as each item completes — gives the user a live N-of-M
-  // counter even when items run in parallel. The managed-progress layer
-  // routes this to the visible window if Zotero is focused, or just
-  // updates internal state if blurred (focus event will re-show).
-  const refreshHeadline = (currentName?: string) => {
-    const label = currentName
-      ? `${opts.menuLabel}: (${done}/${total}) ${currentName}`
-      : `${opts.menuLabel}: (${done}/${total})`;
-    updateManagedHeadline(label);
-  };
-
-  const runOne = async (item: Zotero.Item): Promise<void> => {
-    // Per-item progress: show this PDF's filename while it's working.
-    let displayName = "";
-    try {
-      const p = await getLocalFilePath(item);
-      if (p) displayName = truncateMiddle(PathUtils.filename(p), 40);
-    } catch {
-      /* best-effort */
-    }
-    refreshHeadline(displayName);
-
-    let result: ConvertResult;
-    try {
-      result = await convertAttachment(item, { force: opts.force });
-    } catch (e) {
-      result = { status: "error", message: (e as Error).message };
-    }
-    batchResults.push({ item, result });
-    if (result.status === "ok") ok++;
-    else if (result.status === "skipped") {
-      skipped++;
-      skipReasons.add(result.reason);
-    } else {
-      failed++;
-      failureMessages.push(result.message);
-    }
-    done++;
-    refreshHeadline();
-  };
-
+  // Everything after the lock is taken runs inside this try, so the lock is
+  // released however the batch ends — including a throw in preflight or
+  // progress setup (audit M1).
   try {
-    await Promise.all(pdfs.map((item) => limiter.run(() => runOne(item))));
+    // Pre-flight: avoid N×wall-of-error toasts when docling-serve isn't running.
+    if (!(await preflightServer())) {
+      toast(
+        "Docling",
+        "docling-serve isn't running — start it and retry",
+        false,
+      );
+      return false;
+    }
+
+    const limit = Math.max(
+      1,
+      Math.min(8, Number(getPref("maxConcurrency") ?? 1) || 1),
+    );
+    const limiter = new ConcurrencyLimiter(limit);
+
+    // Hide the noisy "concurrency=1" suffix when the user is on the default —
+    // only surface it when they've actually opted into parallelism.
+    const concurrencyNote = limit > 1 ? ` · concurrency=${limit}` : "";
+    startManagedProgress(
+      `${opts.menuLabel}: converting…`,
+      `${total} PDF${total === 1 ? "" : "s"}${concurrencyNote}`,
+    );
+
+    // Update headline as each item completes — gives the user a live N-of-M
+    // counter even when items run in parallel. Best-effort: a UI hiccup must
+    // never abort the batch.
+    const refreshHeadline = (currentName?: string) => {
+      const label = currentName
+        ? `${opts.menuLabel}: (${done}/${total}) ${currentName}`
+        : `${opts.menuLabel}: (${done}/${total})`;
+      try {
+        updateManagedHeadline(label);
+      } catch {
+        /* progress window gone — keep converting */
+      }
+    };
+
+    const runOne = async (item: Zotero.Item): Promise<void> => {
+      // Per-item progress: show this PDF's filename while it's working.
+      let displayName = "";
+      try {
+        const p = await getLocalFilePath(item);
+        if (p) displayName = truncateMiddle(PathUtils.filename(p), 40);
+      } catch {
+        /* best-effort */
+      }
+      refreshHeadline(displayName);
+
+      let result: ConvertResult;
+      try {
+        result = await convertAttachment(item, { force: opts.force });
+      } catch (e) {
+        result = { status: "error", message: (e as Error).message };
+      }
+      batchResults.push({ item, result });
+      if (result.status === "ok") ok++;
+      else if (result.status === "skipped") {
+        skipped++;
+        skipReasons.add(result.reason);
+      } else {
+        failed++;
+        failureMessages.push(result.message);
+      }
+      done++;
+      refreshHeadline();
+    };
+
+    // allSettled, not all: the lock must stay held until EVERY item has
+    // finished, even if one of them throws (audit M3).
+    await Promise.allSettled(
+      pdfs.map((item) => limiter.run(() => runOne(item))),
+    );
     await applyStatusTagsToParents(batchResults);
   } finally {
-    addon.data.batchInFlight = false;
+    releaseBatch();
   }
 
   const allOk = failed === 0;
@@ -373,6 +381,7 @@ export async function runBatch(
     allOk ? "Docling: done" : "Docling: finished with errors",
     summary,
   );
+  return true;
 }
 
 // ---------------------------------------------------------------------------

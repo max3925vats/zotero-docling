@@ -325,10 +325,13 @@ export async function onExportMarkdownZipClick(
     if (choice === "convert") {
       // Drive the existing batch orchestrator over only the PDFs that
       // need it. runBatch handles its own progress window, status tags,
-      // and batchInFlight guard. We re-plan afterwards to pick up the
-      // freshly-created .md children.
+      // and batch lock. We re-plan afterwards to pick up the
+      // freshly-created .md children. If runBatch didn't run (another
+      // batch holds the lock, server down) it has already told the user
+      // why — stop rather than export a silently partial zip.
       const needs = rows.filter((r) => !r.mdChild).map((r) => r.pdf);
-      await runBatch(needs, { force: false, menuLabel: "Docling" });
+      const ran = await runBatch(needs, { force: false, menuLabel: "Docling" });
+      if (!ran) return;
       rows = planExport(pdfs);
       const stillMissing = rows.filter((r) => !r.mdChild).length;
       if (stillMissing === rows.length) {
