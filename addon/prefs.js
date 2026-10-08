@@ -47,9 +47,10 @@ pref("advancedJson", "");
 pref("useAsyncEndpoint", false);
 pref("asyncPollIntervalSec", 5); // poll cadence in seconds (min 1)
 // Absolute client-side wait ceiling for one async task, in minutes. Does NOT
-// cancel the server-side task (no upstream cancel API; see README). Bounded
-// [1, 1440]. Default 240 (4 hours) — enough for most VLM batches but short
-// enough that a dead server doesn't leave the plugin spinning all day.
+// cancel the server-side task (no upstream cancel API; see README). Range
+// [0, 1440]; 0 = no limit. Default 240 (4 hours) — enough for most VLM
+// batches but short enough that a dead server doesn't leave the plugin
+// spinning all day.
 pref("asyncMaxWaitMin", 240);
 
 // Request timeouts (all user-adjustable; audit H2). Short calls in seconds,

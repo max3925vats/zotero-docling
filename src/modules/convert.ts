@@ -449,6 +449,20 @@ function resolvePreset(
 }
 
 /**
+ * Async max wait in ms. 0 means no limit: docling-serve can't cancel a task,
+ * so giving up client-side only orphans it, and some users would rather the
+ * plugin wait as long as the server works (README, commit 4ba5ace). Unset
+ * or invalid values get the 240-minute default; the maximum is 1440.
+ */
+export function asyncMaxWaitMs(raw: unknown): number {
+  const n = Number(raw);
+  if (raw === undefined || raw === null || raw === "") return 240 * 60_000;
+  if (!Number.isFinite(n) || n < 0) return 240 * 60_000;
+  if (n === 0) return Infinity;
+  return Math.min(1440, Math.max(1, n)) * 60_000;
+}
+
+/**
  * Read a timeout pref as milliseconds. Non-numeric or non-positive values
  * fall back to the shipped default rather than disabling the timeout.
  */
@@ -475,7 +489,9 @@ function requestFailureMessage(
   settingLabel: string,
 ): string {
   if (e instanceof RequestTimeoutError) {
-    return `${e.message} ${what} (Settings → Advanced → Timeouts → ${settingLabel})`;
+    // A timeout stops the waiting, not the work: docling-serve has no cancel
+    // API, so say so rather than imply the conversion was stopped.
+    return `${e.message} ${what} — docling-serve may still be processing this PDF (Settings → Advanced → Timeouts → ${settingLabel})`;
   }
   return "Server not reachable";
 }
@@ -558,11 +574,7 @@ async function fetchConvertResultAsync(
   // Absolute client-side wait ceiling. Does NOT cancel the server-side task
   // (no upstream cancel API; see file header). Bounded [1, 1440] minutes; the
   // pref UI also clamps these.
-  const maxWaitMin = Math.min(
-    1440,
-    Math.max(1, Number(getPref("asyncMaxWaitMin") ?? 240) || 240),
-  );
-  const maxWaitMs = maxWaitMin * 60_000;
+  const maxWaitMs = asyncMaxWaitMs(getPref("asyncMaxWaitMin"));
 
   // 1. Submit
   const authHeaders = buildAuthHeader();
@@ -626,7 +638,7 @@ async function fetchConvertResultAsync(
     if (Date.now() - startedAt > maxWaitMs) {
       return {
         ok: false,
-        message: `Async task exceeded maxWait (${maxWaitMin} min) — server-side task may still be running`,
+        message: `Async task exceeded maxWait (${maxWaitMs / 60_000} min) — server-side task may still be running`,
       };
     }
 

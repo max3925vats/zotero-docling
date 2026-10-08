@@ -28,7 +28,7 @@ pref-max-concurrency-help = Broj PDF-ova koji se istovremeno pretvaraju u jednoj
 pref-notify-on-complete =
     .label = Sistemsko obaveštenje po završetku grupe (samo kada Zotero nije u prvom planu)
 pref-confirm-reconvert =
-    .label = Traži potvrdu pre nego što „Ponovo pretvori (zameni)“ obriše postojeći Markdown
+    .label = Traži potvrdu pre nego što „Ponovo pretvori (zameni)“ zameni postojeći Markdown
 pref-output-title = Izlaz
 pref-attach-to-item =
     .label = Priloži .md datoteku uz Zotero stavku (preporučeno)
@@ -76,7 +76,7 @@ pref-use-async =
     .label = Koristi asinhronu adresu (/v1/convert/file/async)
 pref-async-poll = Razmak između provera (s)
 pref-async-max-wait = Najduže čekanje (min)
-pref-async-max-wait-help = Ograničenje čekanja u dodatku za jedan asinhroni zadatak. Kada se prekorači, dodatak prestaje da proverava stanje i prijavljuje grešku. docling-serve nema API za otkazivanje pojedinačnog zadatka, pa obrada na serveru može ipak da se završi.
+pref-async-max-wait-help = Ograničenje čekanja u dodatku za jedan asinhroni zadatak (podrazumevano 240, najviše 1440; 0 = bez ograničenja). Kada se prekorači, dodatak prestaje da proverava stanje i prijavljuje grešku. docling-serve nema API za otkazivanje pojedinačnog zadatka, pa obrada na serveru može ipak da se završi.
 pref-advanced-title = Napredno
 pref-advanced-help = JSON objekat čiji se ključevi najvišeg nivoa šalju kao polja obrasca serveru docling-serve i imaju prednost nad gornjim podešavanjima. Koristi ga za opcije koje nisu prikazane ovde. Potpuna šema je u dokumentaciji docling-serve OpenAPI na adresi /docs pokrenutog servera.
 pref-disclosure-conversion-collapsed = ▶ Opcije pretvaranja
