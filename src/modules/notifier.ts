@@ -23,6 +23,9 @@ import { formatDuration } from "../utils/format";
 
 const LOG = "[Docling/notifier]";
 const DEBOUNCE_MS = 3000;
+// When docling-serve is down, retry queued PDFs every minute, a few times.
+const PREFLIGHT_RETRY_MS = 60_000;
+const PREFLIGHT_RETRIES = 3;
 
 // Stored on `Zotero` so it survives module reloads from npm-start hot-reload.
 // Without this, every rebuild leaks another observer and the notifier fires N
@@ -40,6 +43,8 @@ let processing = false;
 // while a long manual batch is still in flight. Cleared as soon as we
 // actually start processing.
 let deferredToastShown = false;
+// Consecutive failed server checks for the current queue.
+let preflightFailures = 0;
 
 function log(...args: unknown[]): void {
   try {
@@ -140,14 +145,37 @@ async function processPending(): Promise<void> {
       // Pre-flight: if docling-serve is down, skip the whole batch with one
       // concise toast instead of N "Server not reachable" lines.
       if (!(await preflightServer())) {
-        log("preflight failed — auto-convert paused until server is up");
-        toast(
-          "Docling auto-convert",
-          `Skipped ${ids.length} PDF${ids.length === 1 ? "" : "s"} — docling-serve isn't running`,
-          false,
-        );
+        // Keep the PDFs and retry a few times rather than dropping them
+        // (they used to be lost until the user converted them by hand).
+        preflightFailures++;
+        const n = ids.length;
+        const pdfs = `${n} PDF${n === 1 ? "" : "s"}`;
+        if (preflightFailures <= PREFLIGHT_RETRIES) {
+          for (const id of ids) pendingIDs.add(id);
+          debounceTimer = setTimeout(() => {
+            void processPending();
+          }, PREFLIGHT_RETRY_MS);
+          log(
+            `preflight failed — retry ${preflightFailures}/${PREFLIGHT_RETRIES}`,
+          );
+          if (preflightFailures === 1) {
+            toast(
+              "Docling auto-convert",
+              `docling-serve isn't running — will retry ${pdfs} for a few minutes`,
+              false,
+            );
+          }
+        } else {
+          preflightFailures = 0;
+          toast(
+            "Docling auto-convert",
+            `Skipped ${pdfs} — docling-serve still isn't running`,
+            false,
+          );
+        }
         return;
       }
+      preflightFailures = 0;
 
       const limit = Math.max(
         1,

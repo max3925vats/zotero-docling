@@ -97,7 +97,8 @@ export function resolveMdTargets(selection: Zotero.Item[]): Zotero.Item[] {
 function confirmRemoveImages(count: number): boolean {
   const Services = (globalThis as any).Services;
   const prompt = Services?.prompt;
-  if (!prompt?.confirmEx) return true;
+  // Fail closed: this rewrites files, so never proceed unconfirmed.
+  if (!prompt?.confirmEx) return false;
 
   const Ci = (globalThis as any).Components?.interfaces;
   const STD =
@@ -134,8 +135,8 @@ function confirmRemoveImages(count: number): boolean {
       { value: false },
     );
   } catch (e) {
-    log(`confirm prompt threw, allowing action: ${(e as Error).message}`);
-    return true;
+    log(`confirm prompt threw, not proceeding: ${(e as Error).message}`);
+    return false;
   }
   return pressed === 0;
 }

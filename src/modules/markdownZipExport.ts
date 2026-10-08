@@ -49,7 +49,8 @@ export function zipBaseName(parent: Zotero.Item | null): string {
   ).trim();
   if (!citationKey) {
     const extra = (parent.getField?.("extra") as string | undefined) ?? "";
-    const m = extra.match(/^Citation Key:\s*(\S+)/m);
+    // [ \t]*, not \s*: \s would reach onto the next line for an empty key.
+    const m = extra.match(/^Citation Key:[ \t]*(\S+)/m);
     if (m) citationKey = m[1];
   }
   const safe = (citationKey || parent.key || "unknown").replace(
@@ -70,17 +71,19 @@ export function zipBaseName(parent: Zotero.Item | null): string {
  *   zipUniqueName("vaswani17", taken)  // again → "vaswani17.2.md"
  */
 export function zipUniqueName(base: string, taken: Set<string>): string {
+  // Compare case-insensitively: "Smith2020.md" and "smith2020.md" are the
+  // same file once unzipped on macOS or Windows.
+  const claim = (name: string): boolean => {
+    const key = name.toLowerCase();
+    if (taken.has(key)) return false;
+    taken.add(key);
+    return true;
+  };
   const primary = `${base}.md`;
-  if (!taken.has(primary)) {
-    taken.add(primary);
-    return primary;
-  }
+  if (claim(primary)) return primary;
   for (let i = 1; i < 1000; i++) {
     const candidate = `${base}.${i}.md`;
-    if (!taken.has(candidate)) {
-      taken.add(candidate);
-      return candidate;
-    }
+    if (claim(candidate)) return candidate;
   }
   // Pathological — 1000 PDFs under one parent. Fall back to a key-suffixed
   // name so we never throw.
@@ -216,8 +219,29 @@ async function promptSavePath(defaultName: string): Promise<string | null> {
     return null;
   }
   if (!picked) return null;
-  // Force the .zip extension if the user typed one without it.
-  return /\.zip$/i.test(picked) ? picked : `${picked}.zip`;
+  if (/\.zip$/i.test(picked)) return picked;
+  // The user typed a name without ".zip". The picker's overwrite check was
+  // for that exact name, so check the real target ourselves before
+  // IOUtils.write silently replaces it.
+  const withExt = `${picked}.zip`;
+  let exists = false;
+  try {
+    exists = await IOUtils.exists(withExt);
+  } catch {
+    exists = false;
+  }
+  if (exists) {
+    const prompt = (globalThis as any).Services?.prompt;
+    const win = (Zotero as any).getMainWindow?.() ?? null;
+    const ok =
+      prompt?.confirm?.(
+        win,
+        "Replace existing file?",
+        `${PathUtils.filename(withExt)} already exists. Replace it?`,
+      ) ?? false;
+    if (!ok) return null;
+  }
+  return withExt;
 }
 
 // ---------------------------------------------------------------------------

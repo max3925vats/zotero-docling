@@ -70,12 +70,13 @@ export function buildAuthHeader(): Record<string, string> {
     const user = ((getPref("authUsername") as string) ?? "").trim();
     const pass = (getPref("authSecret") as string) ?? "";
     if (!user && !pass) return {};
-    // Use globalThis.btoa — exposed in Z9's sandbox; fall back to Buffer if
-    // someone runs this under Node tests.
-    const encoded = (
-      (globalThis as any).btoa ??
-      ((s: string) => Buffer.from(s, "binary").toString("base64"))
-    )(`${user}:${pass}`);
+    // Basic auth is base64 of the UTF-8 bytes. btoa() only takes Latin-1, so
+    // non-ASCII credentials (é, €, ...) were mis-encoded or threw outright.
+    const utf8AsLatin1 = encodeURIComponent(`${user}:${pass}`).replace(
+      /%([0-9A-F]{2})/g,
+      (_, hex: string) => String.fromCharCode(parseInt(hex, 16)),
+    );
+    const encoded = (globalThis as any).btoa(utf8AsLatin1);
     return { Authorization: `Basic ${encoded}` };
   }
 
@@ -172,6 +173,8 @@ const inFlightItems = new Set<number>();
 
 /** docling-serve response envelope (subset we read). */
 interface ConvertResponse {
+  /** FastAPI request errors (e.g. 422): a message or a list of {msg}. */
+  detail?: string | Array<{ msg?: string }>;
   document?: {
     filename?: string;
     md_content?: string;
@@ -372,6 +375,12 @@ function formatServerErrors(data: ConvertResponse): string {
   const parts = (data.errors ?? [])
     .map((e) => e?.error_message ?? JSON.stringify(e))
     .filter(Boolean);
+  // Request-level errors (bad option, missing field) come back as FastAPI's
+  // `detail` rather than `errors`.
+  if (parts.length === 0 && data.detail) {
+    if (typeof data.detail === "string") parts.push(data.detail);
+    else parts.push(...data.detail.map((d) => d?.msg ?? JSON.stringify(d)));
+  }
   return parts.join(" | ") || `status="${data.status ?? "unknown"}"`;
 }
 
@@ -545,7 +554,12 @@ async function fetchConvertResultAsync(
           headers: authHeaders,
           signal,
         });
-        if (!r.ok) return { label: httpLabelOf(r) };
+        if (!r.ok) {
+          // Include the server's reason (e.g. a 422 for an option set in
+          // Advanced JSON), not just the status line.
+          const outcome = await parseConvertResponse(r);
+          return { label: outcome.ok ? httpLabelOf(r) : outcome.message };
+        }
         return {
           body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
         };
@@ -603,11 +617,26 @@ async function fetchConvertResultAsync(
             headers: authHeaders,
             signal,
           });
-          if (!r.ok) return { ok: false as const, label: httpLabelOf(r) };
-          return {
-            ok: true as const,
-            status: (await r.json().catch(() => ({}))) as TaskStatusResponse,
-          };
+          if (!r.ok) {
+            // 5xx/429 from a proxy or a busy server are usually transient:
+            // throw so the catch below counts a failed poll and keeps going
+            // (bounded by the max-wait ceiling). Other errors (404 = task
+            // unknown) are final.
+            if (r.status >= 500 || r.status === 429) {
+              throw new Error(`Poll ${httpLabelOf(r)}`);
+            }
+            return { ok: false as const, label: httpLabelOf(r) };
+          }
+          const raw = await r.text();
+          try {
+            return {
+              ok: true as const,
+              status: JSON.parse(raw) as TaskStatusResponse,
+            };
+          } catch {
+            // e.g. a proxy's HTML login page — used to poll silently for hours.
+            throw new Error("Poll returned a non-JSON response");
+          }
         },
         api.AbortController,
       );
@@ -1022,6 +1051,13 @@ export function normalizeServerUrl(
     return {
       ok: false,
       message: `Unsupported scheme "${parsed.protocol}" — use http or https`,
+    };
+  }
+  if (parsed.username || parsed.password) {
+    return {
+      ok: false,
+      message:
+        "Server URL must not include a username or password — enter them under Authentication instead",
     };
   }
   if (parsed.search || parsed.hash) {

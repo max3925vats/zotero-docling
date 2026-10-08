@@ -141,10 +141,10 @@ function confirmReconvertWithUser(count: number): boolean {
   const Services = (globalThis as any).Services;
   const prompt = Services?.prompt;
   if (!prompt?.confirmEx) {
-    // No prompt service available (very unusual). Default to allowing the
-    // action — losing the confirm is preferable to silently blocking the
-    // user from re-converting at all.
-    return true;
+    // No prompt service (very unusual). Fail closed: never replace markdown
+    // without the user's confirmation.
+    Zotero.debug(`${LOG} confirmReconvert: no prompt service — not proceeding`);
+    return false;
   }
 
   const Ci = (globalThis as any).Components?.interfaces;
@@ -166,7 +166,11 @@ function confirmReconvertWithUser(count: number): boolean {
     null;
 
   const title = "Re-convert with Docling?";
-  const body = `This will convert ${count} selected PDF${count === 1 ? "" : "s"} again and replace the existing markdown attachment${count === 1 ? "" : "s"}. The old markdown is moved to the Zotero trash once the new one is attached, and is kept if conversion fails.`;
+  const s = count === 1 ? "" : "s";
+  // With "Attach to item" off nothing is replaced in Zotero — say so.
+  const body = ((getPref("attachToItem") ?? true) as boolean)
+    ? `This will convert ${count} selected PDF${s} again and replace the existing markdown attachment${s}. The old markdown is moved to the Zotero trash once the new one is attached, and is kept if conversion fails.`
+    : `This will convert ${count} selected PDF${s} again and write the result to your export folder. "Attach to item" is off, so the existing markdown attachment${s} in Zotero ${count === 1 ? "is" : "are"} kept as-is.`;
   const checkLabel = "Don't ask again";
   const check = { value: false };
 
@@ -185,9 +189,9 @@ function confirmReconvertWithUser(count: number): boolean {
     );
   } catch (e) {
     Zotero.debug(
-      `${LOG} confirmReconvert prompt threw, allowing action: ${(e as Error).message}`,
+      `${LOG} confirmReconvert prompt threw, not proceeding: ${(e as Error).message}`,
     );
-    return true;
+    return false;
   }
 
   // Button index 0 is "Re-convert"; 1 is Cancel.

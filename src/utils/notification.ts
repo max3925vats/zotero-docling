@@ -19,28 +19,67 @@ function isZoteroFocused(): boolean {
   return false;
 }
 
+/** Minimal surface of nsIAlertsService we use (old and new methods). */
+interface AlertsService {
+  showAlert?: (alert: unknown, listener?: unknown) => void;
+  showAlertNotification?: (...args: unknown[]) => void;
+}
+
+/** Build an nsIAlertNotification, or a plain stand-in if XPCOM isn't there. */
+function makeAlert(title: string, body: string): unknown {
+  const Cc = (globalThis as any).Components?.classes;
+  const Ci = (globalThis as any).Components?.interfaces;
+  try {
+    const alert = Cc["@mozilla.org/alert-notification;1"].createInstance(
+      Ci.nsIAlertNotification,
+    );
+    // name, imageURL, title, text — the remaining init() params are optional.
+    alert.init("zotero-docling", "", title, body);
+    return alert;
+  } catch {
+    return { name: "zotero-docling", imageURL: "", title, text: body };
+  }
+}
+
 /**
  * Show a desktop notification. Silently no-ops on failure (notifications
  * are nice-to-have, not load-bearing).
+ *
+ * Uses `showAlert(nsIAlertNotification)`, available since well before
+ * Firefox 115 (Zotero 7). The old `showAlertNotification(...)` was removed
+ * from newer Firefox, so on Zotero 10 the plugin's notifications silently
+ * never appeared; it's kept only as a fallback. `alerts` is injectable for
+ * tests.
  */
-export function notify(title: string, body: string): void {
+export function notify(
+  title: string,
+  body: string,
+  alerts?: AlertsService,
+): void {
   try {
-    const Cc = (globalThis as any).Components?.classes;
-    const Ci = (globalThis as any).Components?.interfaces;
-    if (!Cc || !Ci) return;
-    const alerts = Cc["@mozilla.org/alerts-service;1"]?.getService?.(
-      Ci.nsIAlertsService,
-    );
-    if (!alerts?.showAlertNotification) return;
-    alerts.showAlertNotification(
-      "", // imageUrl — left blank; OS uses default
-      title,
-      body,
-      false, // textClickable
-      "", // cookie
-      null, // listener
-      "zotero-docling", // name
-    );
+    const service =
+      alerts ??
+      ((globalThis as any).Components?.classes?.[
+        "@mozilla.org/alerts-service;1"
+      ]?.getService?.(
+        (globalThis as any).Components?.interfaces?.nsIAlertsService,
+      ) as AlertsService | undefined);
+    if (!service) return;
+    if (typeof service.showAlert === "function") {
+      service.showAlert(makeAlert(title, body), null);
+      return;
+    }
+    if (typeof service.showAlertNotification === "function") {
+      service.showAlertNotification(
+        "", // imageUrl — left blank; OS uses default
+        title,
+        body,
+        false, // textClickable
+        "", // cookie
+        null, // listener
+        "zotero-docling", // name
+      );
+    }
   } catch {
     /* best-effort */
   }

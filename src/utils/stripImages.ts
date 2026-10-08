@@ -49,14 +49,19 @@ export function stripImagesFromMarkdown(md: string): StripImagesResult {
   };
 
   let fenceChar: string | null = null;
+  let fenceLen = 0;
   const lines = md.split("\n").map((line) => {
     const fence = line.match(FENCE_RE);
     if (fence) {
       const char = fence[1][0];
+      const len = fence[1].length;
       if (fenceChar === null) {
         fenceChar = char; // opening fence
-      } else if (char === fenceChar) {
-        fenceChar = null; // closing fence (mismatched chars stay open)
+        fenceLen = len;
+      } else if (char === fenceChar && len >= fenceLen) {
+        // Closing fence: same character and at least as long as the opening
+        // (CommonMark). A shorter inner fence is code inside the block.
+        fenceChar = null;
       }
       return line;
     }
