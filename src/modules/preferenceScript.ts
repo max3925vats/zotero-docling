@@ -94,6 +94,20 @@ const PIC_PRESET_DETAIL: Record<string, string> = {
   __custom__: "Type any preset name your docling-serve build supports.",
 };
 
+// TEMPORARY (red step): today's behaviour.
+export function authSecretLabelId(scheme: string): string {
+  if (scheme === "bearer") return "pref-auth-token";
+  if (scheme === "basic") return "pref-auth-password";
+  if (scheme === "custom") return "pref-auth-header-value";
+  return "pref-auth-secret";
+}
+export function migrateLegacyCustomPreset(
+  _value: string,
+  _known: string[],
+): { preset: string; custom: string } | null {
+  return null;
+}
+
 export function registerPrefsScripts(win: Window): void {
   // Keep a handle to the prefs window in addon.data — the template's addon.ts
   // already declares the slot.
