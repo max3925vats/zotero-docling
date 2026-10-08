@@ -226,6 +226,8 @@ Then install the `.xpi` via **Tools → Plugins** as above.
    Docling**. A `.md` child appears under the parent — within seconds once
    the [first-run model download](#first-conversion-downloads-model-weights)
    is out of the way.
+   Zotero lists plugin entries at the bottom of the menu, after a separator,
+   and on short screens may group them under a submenu.
 4. (Optional) tick **Auto-convert new PDF attachments** in Behavior to run
    conversion automatically as you import new PDFs.
 
