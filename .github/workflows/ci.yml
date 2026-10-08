@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
+  # Any base branch, so stacked PRs (PR 2 based on PR 1's branch, ...) get CI.
   pull_request:
-    branches:
-      - main
 
 # Least-privilege: CI only reads the repo; no job pushes commits, releases, or comments.
 permissions:
