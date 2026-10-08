@@ -18,15 +18,20 @@ export class ConcurrencyLimiter {
   /** Run `task` when a slot is free; resolves with the task's result. */
   async run<T>(task: () => Promise<T>): Promise<T> {
     if (this.active >= this.limit) {
+      // Wait for a finishing task to hand its slot over (see finally).
       await new Promise<void>((resolve) => this.queue.push(resolve));
+    } else {
+      this.active++;
     }
-    this.active++;
     try {
       return await task();
     } finally {
-      this.active--;
       const next = this.queue.shift();
+      // Pass the slot straight to the next waiter without freeing it. Freeing
+      // first (active--) left a gap before the waiter resumed in which a new
+      // run() could also take the slot, exceeding the limit (audit M9).
       if (next) next();
+      else this.active--;
     }
   }
 }
