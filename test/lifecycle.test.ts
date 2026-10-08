@@ -35,6 +35,9 @@ describe("lifecycle", function () {
     const g = globalThis as any;
     g.addon = (Zotero as any)[config.addonInstance];
     g.ztoolkit = g.addon.data.ztoolkit;
+    // Build-time constant the plugin bundle gets from esbuild `define`; the
+    // test bundle doesn't, and createZToolkit() (run on window load) reads it.
+    if (typeof g.__env__ === "undefined") g.__env__ = "development";
   });
 
   describe("focus listeners", function () {
