@@ -31,6 +31,11 @@ pref("doPictureClassification", false); // do_picture_classification
 pref("vlmPreset", "default"); // vlm_pipeline_preset (server allowlist)
 pref("doPictureDescription", false); // do_picture_description
 pref("pictureDescriptionPreset", "default"); // picture_description_preset
+// Free-text preset names used when a preset menu is set to "Custom…"
+// ("__custom__"). Kept separate from the menu's own pref so a custom name
+// survives reopening the pane and "__custom__" is never sent to the server.
+pref("vlmPresetCustom", "");
+pref("pictureDescriptionPresetCustom", "");
 pref("ocrLang", ""); // comma-separated, e.g. "en,fr,de"
 
 // Tier 4: advanced — JSON object whose top-level keys are merged into the

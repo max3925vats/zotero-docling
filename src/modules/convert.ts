@@ -251,14 +251,16 @@ export function buildConvertForm(
   );
 
   // --- Tier 3: VLM (only meaningful when pipeline=vlm or doPictureDescription) ---
-  const vlmPreset = (getPref("vlmPreset") ?? "default") as string;
+  const vlmPreset = resolvePreset("vlmPreset", "vlmPresetCustom");
   if (vlmPreset) form.append("vlm_pipeline_preset", vlmPreset);
 
   const doPicDesc = (getPref("doPictureDescription") ?? false) as boolean;
   form.append("do_picture_description", String(doPicDesc));
   if (doPicDesc) {
-    const picPreset = (getPref("pictureDescriptionPreset") ??
-      "default") as string;
+    const picPreset = resolvePreset(
+      "pictureDescriptionPreset",
+      "pictureDescriptionPresetCustom",
+    );
     if (picPreset) form.append("picture_description_preset", picPreset);
   }
 
@@ -396,6 +398,22 @@ interface TaskStatusResponse {
 /** Build the response label "HTTP 504 Gateway Timeout" for a Response. */
 function httpLabelOf(r: Response): string {
   return r.statusText ? `HTTP ${r.status} ${r.statusText}` : `HTTP ${r.status}`;
+}
+
+/**
+ * The preset name to send for a preset menu. "Custom…" ("__custom__") means
+ * "use the typed name"; with nothing typed we send no preset at all (the
+ * server's default) rather than the placeholder (audit M10). Any other value
+ * — a known preset, or a custom name saved by an older version — is sent
+ * as-is.
+ */
+function resolvePreset(
+  menuKey: "vlmPreset" | "pictureDescriptionPreset",
+  customKey: "vlmPresetCustom" | "pictureDescriptionPresetCustom",
+): string {
+  const value = ((getPref(menuKey) as string) ?? "default").trim();
+  if (value !== "__custom__") return value;
+  return ((getPref(customKey) as string) ?? "").trim();
 }
 
 /**

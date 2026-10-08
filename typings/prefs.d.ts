@@ -26,6 +26,8 @@ declare namespace _ZoteroTypes {
       "vlmPreset": string;
       "doPictureDescription": boolean;
       "pictureDescriptionPreset": string;
+      "vlmPresetCustom": string;
+      "pictureDescriptionPresetCustom": string;
       "ocrLang": string;
       "advancedJson": string;
       "useAsyncEndpoint": boolean;
