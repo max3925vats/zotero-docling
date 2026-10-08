@@ -45,6 +45,17 @@ const LOG = "[Docling/menu]";
 const ITEM_MENU_ID = "zotero-docling-item-menu";
 const TOOLS_MENU_ID = "zotero-docling-tools-menu";
 
+/**
+ * The key Zotero stores a menu under, which unregisterMenu() expects:
+ * CSS.escape(`${pluginID}-${menuID}`) (pluginAPIBase.mjs). registerMenu()
+ * returns it, but after a hot reload we only have our own IDs, so derive it.
+ */
+function registeredKey(menuID: string): string {
+  const raw = `${addon.data.config.addonID}-${menuID}`;
+  const css = (globalThis as any).CSS ?? (Zotero as any).getMainWindow?.()?.CSS;
+  return css?.escape ? css.escape(raw) : raw;
+}
+
 // Re-exports — used by other modules (markdownZipExport.ts) that need to
 // resolve a Zotero selection in the same way the right-click handlers do.
 export { resolvePdfsToConvert, getSelectedItems };
@@ -450,7 +461,7 @@ export function registerMenus(): void {
   const MenuManager = (Zotero as any).MenuManager;
   const items = (ctx: { items?: Zotero.Item[] }) => ctx.items ?? [];
 
-  MenuManager.registerMenu({
+  const itemKey = MenuManager.registerMenu({
     menuID: ITEM_MENU_ID,
     pluginID,
     target: "main/library/item",
@@ -491,7 +502,7 @@ export function registerMenus(): void {
   });
 
   // Tools menu: reachable without a selection.
-  MenuManager.registerMenu({
+  const toolsKey = MenuManager.registerMenu({
     menuID: TOOLS_MENU_ID,
     pluginID,
     target: "main/menubar/tools",
@@ -509,7 +520,7 @@ export function registerMenus(): void {
     ],
   });
 
-  log(`registerMenus: ${ITEM_MENU_ID}, ${TOOLS_MENU_ID}`);
+  log(`registerMenus: ${itemKey}, ${toolsKey}`);
 }
 
 /** Remove our MenuManager registrations (Zotero also does this on disable). */
@@ -517,7 +528,9 @@ export function unregisterMenus(): void {
   const MenuManager = (Zotero as any).MenuManager;
   for (const id of [ITEM_MENU_ID, TOOLS_MENU_ID]) {
     try {
-      MenuManager?.unregisterMenu(id);
+      // Must be the namespaced key; the bare menuID silently does nothing,
+      // and re-registering after a reload then fails as a duplicate.
+      MenuManager?.unregisterMenu(registeredKey(id));
     } catch {
       /* not registered */
     }
