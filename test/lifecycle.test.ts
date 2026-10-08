@@ -2,7 +2,7 @@ import { assert } from "chai";
 import { config } from "../package.json";
 import hooks from "../src/hooks";
 import { setFetchOverrideForTests } from "../src/modules/convert";
-import { registerMenu, runBatch, unregisterMenu } from "../src/modules/menu";
+import { registerMenus, runBatch } from "../src/modules/menu";
 import {
   attachFocusListeners,
   detachFocusListeners,
@@ -17,8 +17,6 @@ import {
 // removed; menus were registered once at startup, so a main window closed
 // and reopened (macOS) came back without them; one throwing shutdown step
 // skipped the rest; and batches kept converting after shutdown.
-
-const MENU_CONVERT_ID = "zotero-docling-convert";
 
 /** Put the live plugin's own UI back after a test drove the test copy. */
 async function restoreLivePlugin(): Promise<void> {
@@ -64,49 +62,6 @@ describe("lifecycle", function () {
     });
   });
 
-  describe("menus", function () {
-    after(restoreLivePlugin);
-
-    it("come back when the main window is unloaded and loaded again", async function () {
-      const win = Zotero.getMainWindow();
-      await hooks.onMainWindowUnload(win);
-      assert.isNull(win.document.getElementById(MENU_CONVERT_ID));
-
-      await hooks.onMainWindowLoad(win as _ZoteroTypes.MainWindow);
-
-      assert.ok(
-        win.document.getElementById(MENU_CONVERT_ID),
-        "Convert menu item must be registered on window load",
-      );
-    });
-  });
-
-  describe("menus in more than one window", function () {
-    after(restoreLivePlugin);
-
-    it("removing them from one window leaves another window's menus alone", function () {
-      const main = Zotero.getMainWindow();
-      registerMenu(main);
-      const other = {
-        document: main.document.implementation.createHTMLDocument("other"),
-      } as unknown as Window;
-
-      unregisterMenu(other);
-
-      assert.ok(
-        main.document.getElementById(MENU_CONVERT_ID),
-        "the main window's menu item must survive",
-      );
-    });
-
-    it("registering twice for the same window adds each item once", function () {
-      const main = Zotero.getMainWindow();
-      registerMenu(main);
-      registerMenu(main);
-      assert.lengthOf(main.document.querySelectorAll(`#${MENU_CONVERT_ID}`), 1);
-    });
-  });
-
   describe("shutdown", function () {
     let live: any;
 
@@ -119,6 +74,7 @@ describe("lifecycle", function () {
       live.data.alive = true;
       delete live.data.dialog;
       (globalThis as any).addon = live;
+      registerMenus(); // shutdown unregistered them from Zotero.MenuManager
       await restoreLivePlugin();
     });
 
@@ -144,6 +100,22 @@ describe("lifecycle", function () {
         "plugin instance must be unregistered",
       );
       assert.isFalse(live.data.alive);
+      const win = Zotero.getMainWindow();
+      const popup = win.document.getElementById("zotero-itemmenu")!;
+      (Zotero as any).MenuManager.updateMenuPopup(popup, "main/library/item", {
+        getContext: () => ({
+          items: [],
+          tabType: "library",
+          tabID: "zotero-pane",
+        }),
+        skipGrouping: true,
+      });
+      assert.isNull(
+        popup.querySelector(
+          `[data-l10n-id="${config.addonRef}-menuitem-convert"]`,
+        ),
+        "menus must be unregistered from Zotero.MenuManager",
+      );
     });
   });
 

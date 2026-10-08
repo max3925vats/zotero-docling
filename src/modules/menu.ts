@@ -14,7 +14,7 @@
 // (#401), so a client-side abort would just hide a still-running conversion
 // from the user without saving any compute. See README "Known limitations".
 
-import { getString } from "../utils/locale";
+import { getLocaleID, getString } from "../utils/locale";
 import {
   convertAttachment,
   applyStatusTagsToParents,
@@ -41,12 +41,9 @@ import { onExportMarkdownZipClick } from "./markdownZipExport";
 import { onRemoveImagesClick, resolveMdTargets } from "./removeImages";
 
 const LOG = "[Docling/menu]";
-const MENU_CONVERT_ID = "zotero-docling-convert";
-const MENU_RECONVERT_ID = "zotero-docling-reconvert";
-const MENU_EXPORT_MD_ZIP_ID = "zotero-docling-export-md-zip";
-const TOOLS_EXPORT_MD_ZIP_ID = "zotero-docling-tools-export-md-zip";
-const MENU_REMOVE_IMAGES_ID = "zotero-docling-remove-images";
-const TOOLS_REMOVE_IMAGES_ID = "zotero-docling-tools-remove-images";
+// MenuManager registration IDs (one per target popup).
+const ITEM_MENU_ID = "zotero-docling-item-menu";
+const TOOLS_MENU_ID = "zotero-docling-tools-menu";
 
 // Re-exports — used by other modules (markdownZipExport.ts) that need to
 // resolve a Zotero selection in the same way the right-click handlers do.
@@ -101,8 +98,8 @@ function resolvePdfsToConvert(selection: Zotero.Item[]): Zotero.Item[] {
   return out;
 }
 
-function shouldShowConvert(): boolean {
-  return resolvePdfsToConvert(getSelectedItems()).length > 0;
+function shouldShowConvert(items: Zotero.Item[]): boolean {
+  return resolvePdfsToConvert(items).length > 0;
 }
 
 /**
@@ -110,8 +107,8 @@ function shouldShowConvert(): boolean {
  * already has a matching .md sibling — otherwise it would behave identically
  * to plain Convert and just clutter the menu.
  */
-function shouldShowReconvert(): boolean {
-  const pdfs = resolvePdfsToConvert(getSelectedItems());
+function shouldShowReconvert(items: Zotero.Item[]): boolean {
+  const pdfs = resolvePdfsToConvert(items);
   for (const pdf of pdfs) {
     const parentID = pdf.parentItemID;
     if (!parentID) continue;
@@ -440,117 +437,89 @@ async function onReconvertClick(): Promise<void> {
 //  Registration
 // ---------------------------------------------------------------------------
 
-const ALL_MENU_IDS = [
-  MENU_CONVERT_ID,
-  MENU_RECONVERT_ID,
-  MENU_EXPORT_MD_ZIP_ID,
-  TOOLS_EXPORT_MD_ZIP_ID,
-  MENU_REMOVE_IMAGES_ID,
-  TOOLS_REMOVE_IMAGES_ID,
-];
-
-// Documents we've already added menu items to. A second load signal for the
-// same window (Zotero's own onMainWindowLoad plus our startup pass) would
-// otherwise stack another set of popupshowing visibility listeners.
-const registeredDocs = new WeakSet<Document>();
-
-/** Remove our menu items from one window's document. */
-function removeMenuItems(doc: Document): void {
-  for (const id of ALL_MENU_IDS) doc.getElementById(id)?.remove();
-}
-
 /**
- * Add our menu items to `win`. Items go into that window's own popups —
- * not `Zotero.getMainWindow()`, which with several main windows open may be
- * a different window (audit review of PR 2).
+ * Register our entries with Zotero's MenuManager (Zotero 8+). Zotero renders
+ * them in every main window and removes them itself when the plugin is
+ * disabled, so there's no per-window bookkeeping. Labels are Fluent messages
+ * with a `.label` attribute from addon.ftl, which hooks.ts loads into each
+ * main window.
  */
-export function registerMenu(win: Window): void {
-  const doc = win.document;
-  if (registeredDocs.has(doc)) return;
-  const itemPopup = doc.querySelector("#zotero-itemmenu");
-  const toolsPopup = doc.querySelector("#menu_ToolsPopup");
-  if (!itemPopup || !toolsPopup) return; // window not ready; next load retries
-  // Hot-reload safety: drop items left by a previous copy of the plugin.
-  removeMenuItems(doc);
+export function registerMenus(): void {
+  unregisterMenus(); // idempotent across hot reloads
+  const pluginID = addon.data.config.addonID;
+  const MenuManager = (Zotero as any).MenuManager;
+  const items = (ctx: { items?: Zotero.Item[] }) => ctx.items ?? [];
 
-  // Item right-click: Convert
-  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
-    tag: "menuitem",
-    id: MENU_CONVERT_ID,
-    label: getString("menuitem-convert"),
-    commandListener: () => {
-      void onConvertClick();
-    },
-    getVisibility: () => shouldShowConvert(),
+  MenuManager.registerMenu({
+    menuID: ITEM_MENU_ID,
+    pluginID,
+    target: "main/library/item",
+    menus: [
+      {
+        menuType: "menuitem",
+        l10nID: getLocaleID("menuitem-convert"),
+        onShowing: (_e: Event, ctx: any) =>
+          ctx.setVisible(shouldShowConvert(items(ctx))),
+        onCommand: () => void onConvertClick(),
+      },
+      {
+        // Only when there's already a matching .md to replace; otherwise
+        // this would duplicate plain Convert.
+        menuType: "menuitem",
+        l10nID: getLocaleID("menuitem-reconvert"),
+        onShowing: (_e: Event, ctx: any) =>
+          ctx.setVisible(shouldShowReconvert(items(ctx))),
+        onCommand: () => void onReconvertClick(),
+      },
+      {
+        // Shown whenever the selection resolves to ≥1 PDF; the export
+        // handler deals with missing markdown via a confirm dialog.
+        menuType: "menuitem",
+        l10nID: getLocaleID("menuitem-export-md-zip"),
+        onShowing: (_e: Event, ctx: any) =>
+          ctx.setVisible(shouldShowConvert(items(ctx))),
+        onCommand: () => void onExportMarkdownZipClick("selection"),
+      },
+      {
+        menuType: "menuitem",
+        l10nID: getLocaleID("menuitem-remove-images"),
+        onShowing: (_e: Event, ctx: any) =>
+          ctx.setVisible(resolveMdTargets(items(ctx)).length > 0),
+        onCommand: () => void onRemoveImagesClick("selection"),
+      },
+    ],
   });
 
-  // Item right-click: Re-convert (replace) — only when there's already a
-  // matching .md to replace, otherwise this duplicates plain Convert.
-  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
-    tag: "menuitem",
-    id: MENU_RECONVERT_ID,
-    label: getString("menuitem-reconvert"),
-    commandListener: () => {
-      void onReconvertClick();
-    },
-    getVisibility: () => shouldShowReconvert(),
+  // Tools menu: reachable without a selection.
+  MenuManager.registerMenu({
+    menuID: TOOLS_MENU_ID,
+    pluginID,
+    target: "main/menubar/tools",
+    menus: [
+      {
+        menuType: "menuitem",
+        l10nID: getLocaleID("menuitem-tools-export-md-zip"),
+        onCommand: () => void onExportMarkdownZipClick("tools"),
+      },
+      {
+        menuType: "menuitem",
+        l10nID: getLocaleID("menuitem-tools-remove-images"),
+        onCommand: () => void onRemoveImagesClick("tools"),
+      },
+    ],
   });
 
-  // Item right-click: Export markdown to .zip. Shown whenever
-  // the selection resolves to ≥1 PDF — the export handler then handles
-  // the missing-md case via a confirm dialog.
-  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
-    tag: "menuitem",
-    id: MENU_EXPORT_MD_ZIP_ID,
-    label: getString("menuitem-export-md-zip"),
-    commandListener: () => {
-      void onExportMarkdownZipClick("selection");
-    },
-    getVisibility: () => shouldShowConvert(),
-  });
-
-  // Tools → Docling: Export markdown to .zip (.zip). Same handler as the
-  // right-click but reachable without a selection — falls back to "current
-  // library" when nothing is selected.
-  ztoolkit.Menu.register(toolsPopup as XULMenuPopupElement, {
-    tag: "menuitem",
-    id: TOOLS_EXPORT_MD_ZIP_ID,
-    label: getString("menuitem-tools-export-md-zip"),
-    commandListener: () => {
-      void onExportMarkdownZipClick("tools");
-    },
-  });
-
-  // Item right-click: Remove images from markdown — only when the selection
-  // resolves to ≥1 markdown attachment to rewrite. The handler re-confirms
-  // before touching any file.
-  ztoolkit.Menu.register(itemPopup as XULMenuPopupElement, {
-    tag: "menuitem",
-    id: MENU_REMOVE_IMAGES_ID,
-    label: getString("menuitem-remove-images"),
-    commandListener: () => {
-      void onRemoveImagesClick("selection");
-    },
-    getVisibility: () => resolveMdTargets(getSelectedItems()).length > 0,
-  });
-
-  // Tools → Docling: Remove images from markdown…. Same handler as the
-  // right-click; toasts a hint when nothing usable is selected.
-  ztoolkit.Menu.register(toolsPopup as XULMenuPopupElement, {
-    tag: "menuitem",
-    id: TOOLS_REMOVE_IMAGES_ID,
-    label: getString("menuitem-tools-remove-images"),
-    commandListener: () => {
-      void onRemoveImagesClick("tools");
-    },
-  });
-
-  registeredDocs.add(doc);
-  log(`registerMenu: registered ${ALL_MENU_IDS.join(", ")}`);
+  log(`registerMenus: ${ITEM_MENU_ID}, ${TOOLS_MENU_ID}`);
 }
 
-/** Remove our menu items from `win` only. */
-export function unregisterMenu(win: Window): void {
-  removeMenuItems(win.document);
-  registeredDocs.delete(win.document);
+/** Remove our MenuManager registrations (Zotero also does this on disable). */
+export function unregisterMenus(): void {
+  const MenuManager = (Zotero as any).MenuManager;
+  for (const id of [ITEM_MENU_ID, TOOLS_MENU_ID]) {
+    try {
+      MenuManager?.unregisterMenu(id);
+    } catch {
+      /* not registered */
+    }
+  }
 }

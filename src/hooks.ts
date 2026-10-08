@@ -1,5 +1,5 @@
 import { initLocale, getString } from "./utils/locale";
-import { registerMenu, unregisterMenu } from "./modules/menu";
+import { registerMenus, unregisterMenus } from "./modules/menu";
 import { migrateUrlCredentials } from "./modules/convert";
 import { registerNotifier, unregisterNotifier } from "./modules/notifier";
 import { registerPrefsScripts } from "./modules/preferenceScript";
@@ -21,6 +21,8 @@ async function onStartup(): Promise<void> {
   initLocale();
   safely("server URL credential migration", migrateUrlCredentials);
   registerPrefsPane();
+  // Once for all windows: Zotero's MenuManager renders them per window.
+  safely("menu registration", registerMenus);
   registerNotifier();
 
   await Promise.all(
@@ -80,12 +82,13 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // (Template had insertFTLIfNeeded("...-mainWindow.ftl") here; we don't ship
   // a mainWindow.ftl, so omitting it avoids "Missing resource" log spam.)
 
-  // Menus are inserted into the current main window's document, so they
-  // must be registered per window load. Registering once at startup left a
-  // closed-and-reopened main window (macOS) without them (audit M6).
-  // Skip until onStartup has loaded translations (Zotero can signal a window
-  // load before that); onStartup then runs this again for every window.
-  if (addon.data.locale) safely("menu registration", () => registerMenu(win));
+  // MenuManager menu labels are resolved by the window's own Fluent
+  // localization, so our addon.ftl must be loaded into every main window.
+  safely("menu strings", () =>
+    (win as any).MozXULElement.insertFTLIfNeeded(
+      `${addon.data.config.addonRef}-addon.ftl`,
+    ),
+  );
 
   // Blur/focus listeners drive the managed-progress hide-on-blur behaviour
   // (the "stop showing the toast when user switches apps" UX). Re-show on
@@ -113,7 +116,6 @@ function registerPrefsPane(): void {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   safely("focus listener removal", () => detachFocusListeners(win));
-  safely("menu removal", () => unregisterMenu(win));
   // No toolkit-wide unregisterAll() here: the toolkit is shared, so that
   // would also remove things belonging to other open windows.
   safely("dialog close", () => addon.data.dialog?.window?.close());
@@ -128,8 +130,8 @@ function onShutdown(): void {
   safely("notifier removal", unregisterNotifier);
   for (const win of Zotero.getMainWindows()) {
     safely("focus listener removal", () => detachFocusListeners(win));
-    safely("menu removal", () => unregisterMenu(win));
   }
+  safely("menu removal", unregisterMenus);
   safely("toolkit cleanup", () => ztoolkit.unregisterAll());
   safely("dialog close", () => addon.data.dialog?.window?.close());
   // @ts-expect-error - Plugin instance is not typed
