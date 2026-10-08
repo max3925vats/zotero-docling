@@ -265,6 +265,7 @@ export async function runBatch(
   let skipped = 0;
   let failed = 0;
   const failureMessages: string[] = [];
+  const warnings: string[] = [];
   const skipReasons = new Set<string>();
   const batchResults: Array<{ item: Zotero.Item; result: ConvertResult }> = [];
 
@@ -328,8 +329,10 @@ export async function runBatch(
         result = { status: "error", message: (e as Error).message };
       }
       batchResults.push({ item, result });
-      if (result.status === "ok") ok++;
-      else if (result.status === "skipped") {
+      if (result.status === "ok") {
+        ok++;
+        if (result.warning) warnings.push(result.warning);
+      } else if (result.status === "skipped") {
         skipped++;
         skipReasons.add(result.reason);
       } else {
@@ -364,9 +367,11 @@ export async function runBatch(
   const body =
     failureMessages.length > 0
       ? failureMessages.slice(0, 2).join("\n")
-      : skipReasons.size > 0
-        ? Array.from(skipReasons).slice(0, 2).join("\n")
-        : undefined;
+      : warnings.length > 0
+        ? warnings.slice(0, 2).join("\n")
+        : skipReasons.size > 0
+          ? Array.from(skipReasons).slice(0, 2).join("\n")
+          : undefined;
   finishManagedProgress(
     allOk,
     allOk

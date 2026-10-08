@@ -128,6 +128,7 @@ async function processPending(): Promise<void> {
     let failed = 0;
     const skipReasons = new Set<string>();
     const failMessages: string[] = [];
+    const warnings: string[] = [];
     const batchResults: Array<{ item: Zotero.Item; result: ConvertResult }> =
       [];
 
@@ -161,8 +162,10 @@ async function processPending(): Promise<void> {
           log(`auto-convert threw for item ${id}: ${(e as Error).message}`);
         }
         batchResults.push({ item, result });
-        if (result.status === "ok") ok++;
-        else if (result.status === "skipped") {
+        if (result.status === "ok") {
+          ok++;
+          if (result.warning) warnings.push(result.warning);
+        } else if (result.status === "skipped") {
           skipped++;
           skipReasons.add(result.reason);
         } else {
@@ -192,9 +195,11 @@ async function processPending(): Promise<void> {
     const detail =
       failMessages.length > 0
         ? failMessages.slice(0, 2).join("\n")
-        : skipReasons.size > 0
-          ? Array.from(skipReasons).slice(0, 2).join("\n")
-          : undefined;
+        : warnings.length > 0
+          ? warnings.slice(0, 2).join("\n")
+          : skipReasons.size > 0
+            ? Array.from(skipReasons).slice(0, 2).join("\n")
+            : undefined;
     toast(
       "Docling auto-convert",
       detail ? `${summary}\n${detail}` : summary,

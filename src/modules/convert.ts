@@ -141,7 +141,13 @@ export function getWebApis(): {
 }
 
 export type ConvertResult =
-  | { status: "ok"; attachmentID: number; processingTimeSec?: number }
+  | {
+      status: "ok";
+      attachmentID: number;
+      processingTimeSec?: number;
+      /** Set when the .md was attached but a secondary output failed. */
+      warning?: string;
+    }
   | { status: "skipped"; reason: string }
   | { status: "error"; message: string };
 
@@ -888,6 +894,7 @@ async function convertAttachmentInner(
   // Naming: citationKey when set on the parent (BBT), else parent's Zotero key.
   // Two PDFs under one parent will produce the same export filename — last
   // write wins. Documented in the README.
+  let exportWarning: string | undefined;
   if (exportFolder) {
     try {
       await IOUtils.makeDirectory(exportFolder, { ignoreExisting: true });
@@ -896,11 +903,16 @@ async function convertAttachmentInner(
       await IOUtils.writeUTF8(exportPath, markdown);
       log(`exported ${exportPath}`);
     } catch (e) {
-      // Don't fail the whole conversion if export fails — the Zotero
-      // attachment (if requested) already landed.
-      Zotero.debug(
-        `${LOG} export to folder failed (non-fatal): ${(e as Error).message}`,
-      );
+      const message = `Failed to write to export folder: ${(e as Error).message}`;
+      Zotero.debug(`${LOG} ${message}`);
+      // If the export folder was the only output, the conversion produced
+      // nothing the user can reach — that's a failure, not a success
+      // (audit M5). If the .md was attached, succeed but say so.
+      if (!attachToItem) {
+        await IOUtils.remove(tmpDir, { recursive: true }).catch(() => {});
+        return { status: "error", message };
+      }
+      exportWarning = message;
     }
   }
 
@@ -917,6 +929,7 @@ async function convertAttachmentInner(
       typeof data.processing_time === "number"
         ? data.processing_time
         : undefined,
+    warning: exportWarning,
   };
 }
 
