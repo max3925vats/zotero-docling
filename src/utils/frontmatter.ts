@@ -14,6 +14,14 @@
  * a raw newline followed by `---` in a title used to end the frontmatter
  * block early, and stray control characters made the YAML invalid.
  */
+// Characters YAML can't carry literally in a quoted scalar: C0/C1 controls
+// (C1 shows up in PDF metadata decoded with the wrong charset; NEL U+0085
+// is silently folded to a space), DEL, line/paragraph separators (line
+// breaks to YAML 1.1 parsers), BOM / non-characters, and lone surrogates.
+const YAML_UNSAFE =
+  // eslint-disable-next-line no-control-regex
+  /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u2029\ufeff\ufffe\uffff]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
 function yamlString(s: string): string {
   const escaped = s
     .replace(/\\/g, "\\\\")
@@ -21,11 +29,12 @@ function yamlString(s: string): string {
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
     .replace(/\t/g, "\\t")
-    .replace(
-      // eslint-disable-next-line no-control-regex
-      /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g,
-      (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
-    );
+    .replace(YAML_UNSAFE, (c) => {
+      const code = c.charCodeAt(0);
+      return code <= 0xff
+        ? `\\x${code.toString(16).padStart(2, "0")}`
+        : `\\u${code.toString(16).padStart(4, "0")}`;
+    });
   return `"${escaped}"`;
 }
 

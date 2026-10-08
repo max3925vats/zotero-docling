@@ -66,8 +66,12 @@ export function notify(
       ) as AlertsService | undefined);
     if (!service) return;
     if (typeof service.showAlert === "function") {
-      service.showAlert(makeAlert(title, body), null);
-      return;
+      try {
+        service.showAlert(makeAlert(title, body), null);
+        return;
+      } catch {
+        /* fall through to the old API if this build still has it */
+      }
     }
     if (typeof service.showAlertNotification === "function") {
       service.showAlertNotification(

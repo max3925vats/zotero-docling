@@ -6,7 +6,7 @@
 //
 // Verified against docling-serve 1.18.0 on 2026-05.
 
-import { getPref } from "../utils/prefs";
+import { getPref, setPref } from "../utils/prefs";
 import {
   hasMarkdownChild,
   getLocalFilePath,
@@ -56,6 +56,22 @@ function log(...args: unknown[]): void {
  * The `Zotero.Prefs` store is plain text inside the user's profile — surface
  * this in the prefs help and SECURITY.md rather than pretending it's secure.
  */
+/** UTF-8 bytes of a string (lone surrogates become U+FFFD, never a throw). */
+function utf8Bytes(s: string): Uint8Array | number[] {
+  const Encoder = (globalThis as any).TextEncoder;
+  if (Encoder) return new Encoder().encode(s);
+  // Sandbox without TextEncoder: same result via encodeURIComponent.
+  const safe = s.replace(
+    /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
+    "\ufffd",
+  );
+  return Array.from(
+    encodeURIComponent(safe).replace(/%([0-9A-F]{2})/g, (_, h) =>
+      String.fromCharCode(parseInt(h, 16)),
+    ),
+  ).map((c) => c.charCodeAt(0));
+}
+
 export function buildAuthHeader(): Record<string, string> {
   const scheme = ((getPref("authScheme") ?? "none") as string).toLowerCase();
   if (scheme === "none" || scheme === "") return {};
@@ -72,11 +88,10 @@ export function buildAuthHeader(): Record<string, string> {
     if (!user && !pass) return {};
     // Basic auth is base64 of the UTF-8 bytes. btoa() only takes Latin-1, so
     // non-ASCII credentials (é, €, ...) were mis-encoded or threw outright.
-    const utf8AsLatin1 = encodeURIComponent(`${user}:${pass}`).replace(
-      /%([0-9A-F]{2})/g,
-      (_, hex: string) => String.fromCharCode(parseInt(hex, 16)),
-    );
-    const encoded = (globalThis as any).btoa(utf8AsLatin1);
+    const bytes = utf8Bytes(`${user}:${pass}`);
+    let latin1 = "";
+    for (const b of bytes) latin1 += String.fromCharCode(b);
+    const encoded = (globalThis as any).btoa(latin1);
     return { Authorization: `Basic ${encoded}` };
   }
 
@@ -173,8 +188,9 @@ const inFlightItems = new Set<number>();
 
 /** docling-serve response envelope (subset we read). */
 interface ConvertResponse {
-  /** FastAPI request errors (e.g. 422): a message or a list of {msg}. */
-  detail?: string | Array<{ msg?: string }>;
+  /** FastAPI request errors (e.g. 422): a message or a list of {msg};
+   *  proxies and custom handlers sometimes send an object. */
+  detail?: unknown;
   document?: {
     filename?: string;
     md_content?: string;
@@ -378,8 +394,15 @@ function formatServerErrors(data: ConvertResponse): string {
   // Request-level errors (bad option, missing field) come back as FastAPI's
   // `detail` rather than `errors`.
   if (parts.length === 0 && data.detail) {
-    if (typeof data.detail === "string") parts.push(data.detail);
-    else parts.push(...data.detail.map((d) => d?.msg ?? JSON.stringify(d)));
+    const d = data.detail;
+    if (typeof d === "string") parts.push(d);
+    else if (Array.isArray(d)) {
+      parts.push(
+        ...d.map((x) =>
+          typeof x?.msg === "string" ? x.msg : JSON.stringify(x),
+        ),
+      );
+    } else parts.push(JSON.stringify(d));
   }
   return parts.join(" | ") || `status="${data.status ?? "unknown"}"`;
 }
@@ -628,15 +651,18 @@ async function fetchConvertResultAsync(
             return { ok: false as const, label: httpLabelOf(r) };
           }
           const raw = await r.text();
+          let parsed: unknown;
           try {
-            return {
-              ok: true as const,
-              status: JSON.parse(raw) as TaskStatusResponse,
-            };
+            parsed = JSON.parse(raw);
           } catch {
-            // e.g. a proxy's HTML login page — used to poll silently for hours.
-            throw new Error("Poll returned a non-JSON response");
+            parsed = undefined;
           }
+          // e.g. a proxy's HTML login page, or `null` — used to poll silently
+          // for hours (or crash); now a failed poll.
+          if (!parsed || typeof parsed !== "object") {
+            throw new Error("Poll returned an unexpected (non-JSON) response");
+          }
+          return { ok: true as const, status: parsed as TaskStatusResponse };
         },
         api.AbortController,
       );
@@ -1031,8 +1057,36 @@ export async function preflightServer(): Promise<boolean> {
  * http://host:9292/upstream/docling-serve (issue #44). A query string or
  * fragment is rejected because appending a path after it would break.
  */
-// TEMPORARY (red step).
-export function migrateUrlCredentials(): void {}
+/**
+ * One-time cleanup for servers configured as http://user:pass@host. URL
+ * credentials are now rejected (they were silently dropped before), so move
+ * them into the Basic auth settings — unless another auth scheme is already
+ * set up, in which case keep that and just strip the URL. Without this,
+ * auto-convert for such users would only report "docling-serve isn't
+ * running".
+ */
+export function migrateUrlCredentials(): void {
+  const raw = ((getPref("serverUrl") as string) ?? "").trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return;
+  }
+  if (!parsed.username && !parsed.password) return;
+  const user = decodeURIComponent(parsed.username);
+  const pass = decodeURIComponent(parsed.password);
+  parsed.username = "";
+  parsed.password = "";
+  const scheme = ((getPref("authScheme") as string) ?? "none").toLowerCase();
+  if (scheme === "none" || scheme === "") {
+    setPref("authScheme", "basic");
+    setPref("authUsername", user);
+    setPref("authSecret", pass);
+  }
+  setPref("serverUrl", parsed.toString().replace(/\/+$/, ""));
+  log("moved credentials out of the server URL");
+}
 
 export function normalizeServerUrl(
   raw: string,

@@ -88,7 +88,7 @@ export function zipUniqueName(base: string, taken: Set<string>): string {
   // Pathological — 1000 PDFs under one parent. Fall back to a key-suffixed
   // name so we never throw.
   const fallback = `${base}.${Date.now()}.md`;
-  taken.add(fallback);
+  taken.add(fallback.toLowerCase());
   return fallback;
 }
 

@@ -78,6 +78,10 @@ const observer = {
     if (queued === 0) return;
     log(`queued ${queued} PDF(s); total pending=${pendingIDs.size}`);
 
+    // While waiting to retry an unreachable server, let new PDFs join the
+    // scheduled retry: resetting to the short debounce here re-ran the
+    // server check early and used up the retries within seconds.
+    if (preflightFailures > 0 && debounceTimer) return;
     // Reset the debounce so a steady stream of adds extends the wait.
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -98,6 +102,10 @@ async function processPending(): Promise<void> {
   processing = true;
   try {
     const ids = Array.from(pendingIDs);
+    if (ids.length === 0) {
+      debounceTimer = null;
+      return;
+    }
     pendingIDs.clear();
     debounceTimer = null;
     log(`processing ${ids.length} pending PDF(s)`);
@@ -152,6 +160,8 @@ async function processPending(): Promise<void> {
         const pdfs = `${n} PDF${n === 1 ? "" : "s"}`;
         if (preflightFailures <= PREFLIGHT_RETRIES) {
           for (const id of ids) pendingIDs.add(id);
+          // Replace any timer armed meanwhile, so retries never multiply.
+          if (debounceTimer) clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
             void processPending();
           }, PREFLIGHT_RETRY_MS);

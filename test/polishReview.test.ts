@@ -39,6 +39,7 @@ describe("polish (review follow-ups)", function () {
 
   describe("credentials in the server URL", function () {
     const KEYS = ["serverUrl", "authScheme", "authUsername", "authSecret"];
+
     afterEach(function () {
       for (const k of KEYS) Zotero.Prefs.clear(`${PREFIX}.${k}`, true);
     });

@@ -1,5 +1,6 @@
 import { initLocale, getString } from "./utils/locale";
 import { registerMenu, unregisterMenu } from "./modules/menu";
+import { migrateUrlCredentials } from "./modules/convert";
 import { registerNotifier, unregisterNotifier } from "./modules/notifier";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { onZoteroBlur, onZoteroFocus, toast } from "./modules/ui";
@@ -18,6 +19,7 @@ async function onStartup(): Promise<void> {
   ]);
 
   initLocale();
+  safely("server URL credential migration", migrateUrlCredentials);
   registerPrefsPane();
   registerNotifier();
 
