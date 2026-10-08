@@ -16,6 +16,6 @@ describe("appHasFocus", function () {
   });
 
   it("is false when the focus manager is unavailable, preserving the old hide-on-blur behaviour", function () {
-    assert.isFalse(appHasFocus(undefined));
+    assert.isFalse(appHasFocus(null));
   });
 });

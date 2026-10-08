@@ -173,8 +173,11 @@ export function finishManagedProgress(
  * activeWindow once focus has moved to another application.
  */
 export function appHasFocus(
-  focusManager: { activeWindow: unknown } | undefined = (globalThis as any)
-    .Services?.focus,
+  // `null` means "no focus manager available". (Passing `undefined` would
+  // fall back to this default, like omitting the argument.)
+  focusManager: { activeWindow: unknown } | null | undefined = (
+    globalThis as any
+  ).Services?.focus,
 ): boolean {
   if (!focusManager) return false;
   return focusManager.activeWindow != null;
