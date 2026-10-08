@@ -3,10 +3,25 @@
 
 import { withDbLock } from "./dbLock";
 
-// TEMPORARY (red step): mirrors the current inline rule so the new tests can
-// demonstrate the bug in CI before the fix lands.
+/**
+ * Markdown filename produced for a PDF: strip a trailing ".pdf" (any case)
+ * and append ".md". A PDF stored without an extension ("fulltext") maps to
+ * "fulltext.md" — the old replace-only rule mapped it to "fulltext", i.e. to
+ * the PDF itself, which made Re-convert erase the PDF (audit H1).
+ */
 export function mdNameForPdf(pdfFilename: string): string {
-  return pdfFilename.replace(/\.pdf$/i, ".md");
+  return `${pdfFilename.replace(/\.pdf$/i, "")}.md`;
+}
+
+/** True for attachment items that look like markdown (.md or text/markdown). */
+export function isMarkdownAttachment(item: Zotero.Item): boolean {
+  if ((item.itemType as string) !== "attachment") return false;
+  if (item.attachmentContentType === "text/markdown") return true;
+  // A PDF is never markdown, whatever its filename says.
+  if (item.attachmentContentType === "application/pdf") return false;
+  return ((item.attachmentFilename ?? "") as string)
+    .toLowerCase()
+    .endsWith(".md");
 }
 
 /**
@@ -25,22 +40,14 @@ export async function hasMarkdownChild(
   parentItemID: number,
   matchPdfFilename?: string,
 ): Promise<boolean> {
+  if (matchPdfFilename !== undefined) {
+    return findMatchingMdChild(parentItemID, matchPdfFilename) !== null;
+  }
   const parent = Zotero.Items.get(parentItemID);
   if (!parent) return false;
-  const expectedMd = matchPdfFilename
-    ? matchPdfFilename.replace(/\.pdf$/i, ".md").toLowerCase()
-    : null;
-  const childIDs = parent.getAttachments();
-  for (const id of childIDs) {
+  for (const id of parent.getAttachments()) {
     const child = Zotero.Items.get(id);
-    if (!child) continue;
-    const fname = (child.attachmentFilename ?? "").toLowerCase();
-    if (expectedMd) {
-      if (fname === expectedMd) return true;
-    } else {
-      if (child.attachmentContentType === "text/markdown") return true;
-      if (fname.endsWith(".md")) return true;
-    }
+    if (child && isMarkdownAttachment(child)) return true;
   }
   return false;
 }
@@ -84,12 +91,15 @@ export function findMatchingMdChild(
   parentItemID: number,
   pdfFilename: string,
 ): Zotero.Item | null {
+  if (!pdfFilename) return null;
   const parent = Zotero.Items.get(parentItemID);
   if (!parent) return null;
-  const expected = pdfFilename.replace(/\.pdf$/i, ".md").toLowerCase();
+  const expected = mdNameForPdf(pdfFilename).toLowerCase();
   for (const id of parent.getAttachments()) {
     const child = Zotero.Items.get(id);
-    if (!child) continue;
+    // Only markdown attachments qualify — this is what stops a PDF from
+    // ever matching itself.
+    if (!child || !isMarkdownAttachment(child)) continue;
     const fname = (child.attachmentFilename ?? "").toLowerCase();
     if (fname === expected) return child;
   }

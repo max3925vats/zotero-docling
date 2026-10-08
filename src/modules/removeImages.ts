@@ -15,7 +15,11 @@
 
 import { toast } from "./ui";
 import { getSelectedItems } from "./menu";
-import { getLocalFilePath, findMatchingMdChild } from "../utils/zotero";
+import {
+  getLocalFilePath,
+  findMatchingMdChild,
+  isMarkdownAttachment,
+} from "../utils/zotero";
 import { stripImagesFromMarkdown } from "../utils/stripImages";
 import { formatBytes } from "../utils/format";
 
@@ -27,15 +31,6 @@ function log(...args: unknown[]): void {
   } catch {
     /* shutting down */
   }
-}
-
-/** True for attachment items that look like markdown (.md or text/markdown). */
-function isMarkdownAttachment(item: Zotero.Item): boolean {
-  if ((item.itemType as string) !== "attachment") return false;
-  if (item.attachmentContentType === "text/markdown") return true;
-  return ((item.attachmentFilename ?? "") as string)
-    .toLowerCase()
-    .endsWith(".md");
 }
 
 /**

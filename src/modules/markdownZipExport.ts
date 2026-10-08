@@ -17,7 +17,7 @@ import JSZip from "jszip";
 
 import { toast } from "./ui";
 import { runBatch, resolvePdfsToConvert, getSelectedItems } from "./menu";
-import { getLocalFilePath } from "../utils/zotero";
+import { findMatchingMdChild, getLocalFilePath } from "../utils/zotero";
 
 const LOG = "[Docling/zip]";
 
@@ -122,18 +122,7 @@ function planExport(pdfs: Zotero.Item[]): ZipRow[] {
     if (!parentID) continue;
     const parent = Zotero.Items.get(parentID);
     if (!parent) continue;
-    const pdfName = (pdf.attachmentFilename ?? "").toLowerCase();
-    const expectedMd = pdfName.replace(/\.pdf$/i, ".md");
-    let mdChild: Zotero.Item | null = null;
-    for (const cid of parent.getAttachments()) {
-      const child = Zotero.Items.get(cid);
-      if (!child) continue;
-      const cname = (child.attachmentFilename ?? "").toLowerCase();
-      if (cname === expectedMd) {
-        mdChild = child;
-        break;
-      }
-    }
+    const mdChild = findMatchingMdChild(parentID, pdf.attachmentFilename ?? "");
     out.push({ parent, pdf, mdChild });
   }
   return out;

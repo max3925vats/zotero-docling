@@ -11,6 +11,7 @@ import {
   hasMarkdownChild,
   getLocalFilePath,
   isConvertiblePdf,
+  mdNameForPdf,
 } from "../utils/zotero";
 import {
   buildFrontmatter,
@@ -708,7 +709,7 @@ async function convertAttachmentInner(
   // Per-item subdir keeps the expected filename (paper.md) so the Zotero
   // attachment's attachmentFilename matches what hasMarkdownChild expects on
   // subsequent skipIfExists checks.
-  const mdName = filename.replace(/\.pdf$/i, ".md");
+  const mdName = mdNameForPdf(filename);
   const tmpDir = PathUtils.join(PathUtils.tempDir, `zd-${item.key}`);
   const tmpPath = PathUtils.join(tmpDir, mdName);
   try {
