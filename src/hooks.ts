@@ -25,11 +25,13 @@ async function onStartup(): Promise<void> {
   initLocale();
   // Secrets live in the login manager (0.6.0+). Load them, then run the
   // one-time migrations, before anything can send a request.
-  await safelyAsync("secrets and credential migration", async () => {
-    await loadSecrets();
-    await migrateUrlCredentials();
+  // Each step is isolated so one failure doesn't skip the others. The pref
+  // migration runs first: URL credentials (the ones in use) then win.
+  await safelyAsync("secrets load", loadSecrets);
+  await safelyAsync("auth secret migration", async () => {
     await migrateAuthSecretPref();
   });
+  await safelyAsync("server URL credential migration", migrateUrlCredentials);
   registerPrefsPane();
   // Once for all windows: Zotero's MenuManager renders them per window.
   safely("menu registration", registerMenus);

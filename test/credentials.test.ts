@@ -112,5 +112,31 @@ describe("credentials", function () {
       assert.strictEqual(getSecret("docling-serve-auth"), "s@cret");
       assert.isUndefined(get("authSecret"));
     });
+
+    it("leaves the URL and auth prefs untouched when the store write fails", async function () {
+      set("serverUrl", "http://bob:pw@docling.test:5001");
+      setLoginManagerForTests({
+        searchLoginsAsync: async () => [],
+        removeLoginAsync: async () => undefined,
+        addLoginAsync: async () => {
+          throw new Error("store broken");
+        },
+      });
+      try {
+        let threw = false;
+        try {
+          await migrateUrlCredentials();
+        } catch {
+          threw = true;
+        }
+        assert.isTrue(threw);
+        assert.strictEqual(get("serverUrl"), "http://bob:pw@docling.test:5001");
+        // Defaults from prefs.js: still unchanged.
+        assert.strictEqual(get("authScheme"), "none");
+        assert.strictEqual(get("authUsername"), "");
+      } finally {
+        setLoginManagerForTests(null);
+      }
+    });
   });
 });

@@ -70,9 +70,11 @@ export async function migrateUrlCredentials(): Promise<void> {
   parsed.password = "";
   const scheme = ((getPref("authScheme") as string) ?? "none").toLowerCase();
   if (scheme === "none" || scheme === "") {
+    // Store the password first: if this throws, the URL and auth prefs are
+    // untouched, so the next startup retries instead of losing the password.
+    await setSecret("docling-serve-auth", pass);
     setPref("authScheme", "basic");
     setPref("authUsername", user);
-    await setSecret("docling-serve-auth", pass);
   }
   setPref("serverUrl", parsed.toString().replace(/\/+$/, ""));
   Zotero.debug("[zotero-docling] moved credentials out of the server URL");
