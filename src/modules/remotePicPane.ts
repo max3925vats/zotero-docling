@@ -201,21 +201,31 @@ export function bindRemotePicTest(win: Window): void {
   );
   if (!btn || !out) return;
   btn.addEventListener("command", async () => {
+    // A XUL button: the attribute, not .disabled, is what blocks clicks.
+    btn.setAttribute("disabled", "true");
     out.textContent = "Testing…";
-    // Save a just-typed key before reading it.
-    await secretWritesSettled();
-    const s = readRemoteSettings();
-    const r = await testRemoteApi(
-      s,
-      getSecret(providerKeyName(s.provider)),
-      (p, u) => confirmPaidTest(win, p, u),
-      getWebApis(),
-    );
-    if ("cancelled" in r) out.textContent = "Cancelled — nothing was sent.";
-    else if (!r.ok) out.textContent = `✗ ${r.message}`;
-    else
-      out.textContent = r.modelListed
-        ? `✓ Connected; model "${s.model}" found.`
-        : `✓ Connected, but "${s.model}" isn't in the provider's model list — check the name.`;
+    try {
+      // Save a just-typed key before reading it.
+      await secretWritesSettled();
+      const s = readRemoteSettings();
+      const r = await testRemoteApi(
+        s,
+        getSecret(providerKeyName(s.provider)),
+        (p, u) => confirmPaidTest(win, p, u),
+        getWebApis(),
+      );
+      if ("cancelled" in r) out.textContent = "Cancelled — nothing was sent.";
+      else if (!r.ok) out.textContent = `✗ ${r.message}`;
+      else
+        out.textContent = r.modelListed
+          ? `✓ Connected; model "${s.model}" found.`
+          : `✓ Connected, but "${s.model}" isn't in the provider's model list — check the name.`;
+    } catch (e) {
+      // e.g. getWebApis() or the confirm dialog failing: say so instead of
+      // leaving "Testing…" on screen forever.
+      out.textContent = `✗ ${(e as Error).message}`;
+    } finally {
+      btn.removeAttribute("disabled");
+    }
   });
 }
