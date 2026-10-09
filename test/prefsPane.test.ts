@@ -175,8 +175,13 @@ describe("prefs pane", function () {
       // leave the field unsaved with no other symptom.
       const url = `chrome://${config.addonRef}/content/preferences.xhtml`;
       const src = await Zotero.File.getContentsFromURLAsync(url);
+      // The scaffold build prefixes pref names in the shipped XHTML.
       for (const k of REMOTE) {
-        assert.include(src, `preference="${k}"`, `${k} must be bound`);
+        assert.include(
+          src,
+          `preference="${config.prefsPrefix}.${k}"`,
+          `${k} must be bound`,
+        );
       }
     });
   });
