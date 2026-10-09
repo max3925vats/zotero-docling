@@ -20,7 +20,10 @@ import {
   stripExistingFrontmatter,
 } from "../utils/frontmatter";
 import { withDbLock } from "../utils/dbLock";
-import { enrichServerError } from "../utils/serverErrorHints";
+import {
+  enrichRemotePicError,
+  enrichServerError,
+} from "../utils/serverErrorHints";
 import { buildAuthHeader } from "./credentials";
 import { fetchConvertResult, timeoutMs } from "./transport";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
@@ -503,8 +506,16 @@ async function convertAttachmentInner(
   // --- 6. Talk to docling-serve via sync or async transport ---
   log(`send ${serverUrl} file=${filename}`);
   const outcome = await fetchConvertResult(serverUrl, form, api);
+  // Hint context: only add remote-API causes when the feature actually ran.
+  const hintCtx = {
+    enabled: !!remote,
+    providerUrl: remote ? readRemoteSettings().url : "",
+  };
   if (!outcome.ok) {
-    return { status: "error", message: outcome.message };
+    return {
+      status: "error",
+      message: enrichRemotePicError(outcome.message, hintCtx),
+    };
   }
   const data = outcome.data;
 
@@ -514,7 +525,7 @@ async function convertAttachmentInner(
     const raw = `Conversion ${data.status ?? "unknown"}: ${formatServerErrors(data)}`;
     return {
       status: "error",
-      message: enrichServerError(raw),
+      message: enrichRemotePicError(enrichServerError(raw), hintCtx),
     };
   }
   const rawMarkdown = data.document?.md_content;
