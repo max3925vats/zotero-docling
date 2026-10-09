@@ -10,6 +10,7 @@ import { clearAllSecrets } from "../utils/secrets";
 import { FluentMessageId } from "../../typings/i10n";
 import { testServerConnection } from "./convert";
 import { bindSecretField } from "./remotePicPane";
+import { clearCapabilitiesCache } from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
 
@@ -18,7 +19,7 @@ const LOG = "[zotero-docling]";
  * Reset-to-defaults knows what to clear. Each Zotero.Prefs.clear() reverts
  * the corresponding pref to whatever prefs.js declared at install time.
  */
-const ALL_PREF_KEYS: ReadonlyArray<string> = [
+export const ALL_PREF_KEYS: ReadonlyArray<string> = [
   "serverUrl",
   "autoConvert",
   "skipIfExists",
@@ -45,6 +46,12 @@ const ALL_PREF_KEYS: ReadonlyArray<string> = [
   "asyncMaxWaitMin",
   "vlmPresetCustom",
   "pictureDescriptionPresetCustom",
+  "remotePicApiEnabled",
+  "remotePicApiProvider",
+  "remotePicApiUrl",
+  "remotePicApiModel",
+  "remotePicApiPrompt",
+  "remotePicApiTimeoutSec",
   "healthTimeoutSec",
   "pollTimeoutSec",
   "asyncUploadTimeoutMin",
@@ -362,6 +369,8 @@ function bindTestConnection(win: Window): void {
       "http://localhost:5001";
     label.textContent = "Testing…";
     label.style.color = "";
+    // Re-probe /v1/capabilities: the user may have just restarted the server.
+    clearCapabilitiesCache();
     const result = await testServerConnection(serverUrl);
     const snapshot = {
       ok: result.ok,

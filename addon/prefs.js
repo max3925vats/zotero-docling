@@ -36,6 +36,14 @@ pref("pictureDescriptionPreset", "default"); // picture_description_preset
 // survives reopening the pane and "__custom__" is never sent to the server.
 pref("vlmPresetCustom", "");
 pref("pictureDescriptionPresetCustom", "");
+// Remote vision API for picture description (#17). The API key is NOT a pref:
+// it lives in the login manager (see src/utils/secrets.ts).
+pref("remotePicApiEnabled", false);
+pref("remotePicApiProvider", "openai"); // openai|anthropic|openrouter|ollama|lmstudio|vllm|custom
+pref("remotePicApiUrl", "https://api.openai.com/v1/chat/completions");
+pref("remotePicApiModel", "");
+pref("remotePicApiPrompt", "");
+pref("remotePicApiTimeoutSec", 120);
 pref("ocrLang", ""); // comma-separated, e.g. "en,fr,de"
 
 // Tier 4: advanced — JSON object whose top-level keys are merged into the

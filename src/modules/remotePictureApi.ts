@@ -5,6 +5,12 @@
 // the server allows (see resolveRemoteMode). Spec:
 // plan/2026-10-09-issue-17-remote-picture-api-design.md.
 
+import { getPref } from "../utils/prefs";
+import { withRequestTimeout } from "../utils/timeout";
+import { buildAuthHeader } from "./credentials";
+import type { WebApis } from "./convert";
+import { timeoutMs } from "./transport";
+
 export type ProviderId =
   | "openai"
   | "anthropic"
@@ -171,4 +177,68 @@ export function modelsUrl(chatUrl: string): string | null {
   const trimmed = chatUrl.trim().replace(/\/+$/, "");
   if (!/\/chat\/completions$/.test(trimmed)) return null;
   return trimmed.replace(/\/chat\/completions$/, "/models");
+}
+
+export function remotePicEnabled(): boolean {
+  return Boolean(getPref("remotePicApiEnabled") ?? false);
+}
+
+export function readRemoteSettings(): RemoteSettings {
+  const raw = String(getPref("remotePicApiProvider") ?? "openai");
+  const provider = (raw in PROVIDERS ? raw : "custom") as ProviderId;
+  const t = Number(getPref("remotePicApiTimeoutSec"));
+  return {
+    provider,
+    url: String(getPref("remotePicApiUrl") ?? ""),
+    model: String(getPref("remotePicApiModel") ?? ""),
+    prompt: String(getPref("remotePicApiPrompt") ?? ""),
+    timeoutSec: Number.isFinite(t) && t > 0 ? t : 120,
+  };
+}
+
+// The server's answer barely changes, but a user may restart docling-serve
+// with a different flag mid-session — so cache briefly, not forever.
+const CAPS_TTL_MS = 5 * 60_000;
+const capsCache = new Map<string, { mode: RemoteMode; at: number }>();
+
+export function clearCapabilitiesCache(): void {
+  capsCache.clear();
+}
+
+/**
+ * "custom" if the server accepts picture_description_custom_config (1.36+
+ * reports it in /v1/capabilities when
+ * DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG=true), otherwise
+ * "legacy". Any probe failure means legacy: never fail a conversion because
+ * the probe did.
+ */
+export async function resolveRemoteMode(
+  serverUrl: string,
+  api: WebApis,
+): Promise<RemoteMode> {
+  const hit = capsCache.get(serverUrl);
+  if (hit && Date.now() - hit.at < CAPS_TTL_MS) return hit.mode;
+  let mode: RemoteMode;
+  try {
+    mode = await withRequestTimeout(
+      timeoutMs("healthTimeoutSec", 30),
+      async (signal) => {
+        const r = await api.fetch(`${serverUrl}/v1/capabilities`, {
+          headers: buildAuthHeader(),
+          signal,
+        });
+        if (!r.ok) return "legacy" as const;
+        const body = JSON.parse(await r.text());
+        return body?.stages?.picture_description?.custom_config_option ===
+          "picture_description_custom_config"
+          ? ("custom" as const)
+          : ("legacy" as const);
+      },
+      api.AbortController,
+    );
+  } catch {
+    mode = "legacy";
+  }
+  capsCache.set(serverUrl, { mode, at: Date.now() });
+  return mode;
 }

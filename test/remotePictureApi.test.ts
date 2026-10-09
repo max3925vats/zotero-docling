@@ -1,6 +1,13 @@
+// The pure #cold suite stays separate from the Zotero-dependent suites below.
+/* eslint-disable mocha/max-top-level-suites */
 import { assert } from "chai";
+import { config } from "../package.json";
+import { getWebApis, setFetchOverrideForTests } from "../src/modules/convert";
 import {
   buildRemotePicField,
+  clearCapabilitiesCache,
+  readRemoteSettings,
+  resolveRemoteMode,
   DEFAULT_PROMPT,
   headersFor,
   modelsUrl,
@@ -139,5 +146,127 @@ describe("remotePictureApi #cold", function () {
     it("returns null for URLs it can't map", function () {
       assert.isNull(modelsUrl("https://example.com/describe"));
     });
+  });
+});
+
+describe("resolveRemoteMode", function () {
+  let calls = 0;
+  function serve(res: () => Response): void {
+    calls = 0;
+    setFetchOverrideForTests((async (input: RequestInfo | URL) => {
+      calls++;
+      assert.match(String(input), /\/v1\/capabilities$/);
+      return res();
+    }) as typeof fetch);
+  }
+  const caps = (opt: string | null) => () =>
+    new Response(
+      JSON.stringify({
+        stages: {
+          picture_description: {
+            option: "picture_description_preset",
+            custom_config_option: opt,
+          },
+        },
+      }),
+      { status: 200 },
+    );
+
+  beforeEach(function () {
+    return clearCapabilitiesCache();
+  });
+
+  afterEach(function () {
+    return setFetchOverrideForTests(null);
+  });
+
+  it("picks custom when the server allows custom picture-description configs", async function () {
+    serve(caps("picture_description_custom_config"));
+    assert.strictEqual(
+      await resolveRemoteMode("http://d.test", getWebApis()),
+      "custom",
+    );
+  });
+
+  it("picks legacy when custom configs are off", async function () {
+    serve(caps(null));
+    assert.strictEqual(
+      await resolveRemoteMode("http://d.test", getWebApis()),
+      "legacy",
+    );
+  });
+
+  it("picks legacy when the endpoint is missing (docling-serve 1.18)", async function () {
+    serve(() => new Response('{"detail":"Not Found"}', { status: 404 }));
+    assert.strictEqual(
+      await resolveRemoteMode("http://d.test", getWebApis()),
+      "legacy",
+    );
+  });
+
+  it("picks legacy on a non-JSON body", async function () {
+    serve(() => new Response("<html>", { status: 200 }));
+    assert.strictEqual(
+      await resolveRemoteMode("http://d.test", getWebApis()),
+      "legacy",
+    );
+  });
+
+  it("picks legacy when the request throws", async function () {
+    setFetchOverrideForTests((async () => {
+      throw new TypeError("NetworkError");
+    }) as typeof fetch);
+    assert.strictEqual(
+      await resolveRemoteMode("http://d.test", getWebApis()),
+      "legacy",
+    );
+  });
+
+  it("caches per server URL", async function () {
+    serve(caps("picture_description_custom_config"));
+    await resolveRemoteMode("http://d.test", getWebApis());
+    await resolveRemoteMode("http://d.test", getWebApis());
+    assert.strictEqual(calls, 1);
+    await resolveRemoteMode("http://other.test", getWebApis());
+    assert.strictEqual(calls, 2);
+  });
+
+  it("re-probes after clearCapabilitiesCache", async function () {
+    serve(caps(null));
+    await resolveRemoteMode("http://d.test", getWebApis());
+    clearCapabilitiesCache();
+    await resolveRemoteMode("http://d.test", getWebApis());
+    assert.strictEqual(calls, 2);
+  });
+});
+
+describe("readRemoteSettings", function () {
+  // Resolved lazily: config access in the describe body trips mocha/no-setup-in-describe.
+  const P = (): string => config.prefsPrefix;
+
+  afterEach(function () {
+    for (const k of [
+      "remotePicApiProvider",
+      "remotePicApiUrl",
+      "remotePicApiModel",
+      "remotePicApiPrompt",
+      "remotePicApiTimeoutSec",
+    ])
+      Zotero.Prefs.clear(`${P()}.${k}`, true);
+  });
+
+  it("reads prefs and falls back to 120 s for a bad timeout", function () {
+    Zotero.Prefs.set(`${P()}.remotePicApiProvider`, "ollama", true);
+    Zotero.Prefs.set(`${P()}.remotePicApiModel`, "qwen2.5vl:3b", true);
+    Zotero.Prefs.set(`${P()}.remotePicApiTimeoutSec`, 0, true);
+    const s = readRemoteSettings();
+    assert.strictEqual(s.provider, "ollama");
+    assert.strictEqual(s.model, "qwen2.5vl:3b");
+    assert.strictEqual(s.timeoutSec, 120);
+  });
+
+  it("treats an unknown provider as custom", function () {
+    Zotero.Prefs.set(`${P()}.remotePicApiProvider`, "nonsense", true);
+    assert.strictEqual(readRemoteSettings().provider, "custom");
   });
 });
