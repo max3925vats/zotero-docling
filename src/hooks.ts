@@ -12,6 +12,7 @@ import {
   detachFocusListeners,
 } from "./modules/windowListeners";
 import { createZToolkit } from "./utils/ztoolkit";
+import { notify } from "./utils/notification";
 import { getPref, setPref } from "./utils/prefs";
 import { loadSecrets } from "./utils/secrets";
 
@@ -27,7 +28,7 @@ async function onStartup(): Promise<void> {
   // one-time migrations, before anything can send a request.
   // Each step is isolated so one failure doesn't skip the others. The pref
   // migration runs first: URL credentials (the ones in use) then win.
-  await safelyAsync("secrets load", loadSecrets);
+  await safelyAsync("secrets load", loadSecretsOrWarn);
   await safelyAsync("auth secret migration", async () => {
     await migrateAuthSecretPref();
   });
@@ -43,6 +44,23 @@ async function onStartup(): Promise<void> {
 
   addon.data.initialized = true;
   maybeShowFirstRunNudge();
+}
+
+/**
+ * Load secrets; if the login manager can't be read, tell the user once.
+ * Conversions still run (without the saved credentials), so this stays
+ * non-fatal — the rethrow only lets safelyAsync() log it.
+ */
+async function loadSecretsOrWarn(): Promise<void> {
+  try {
+    await loadSecrets();
+  } catch (e) {
+    notify(
+      "zotero-docling",
+      "zotero-docling couldn't read saved credentials from Zotero's login manager. Conversions will run without them; re-enter them in Settings → zotero-docling.",
+    );
+    throw e;
+  }
 }
 
 /**

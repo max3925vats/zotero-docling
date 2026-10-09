@@ -57,6 +57,17 @@ function log(...args: unknown[]): void {
   }
 }
 
+/**
+ * Make sure the secrets cache is loaded. A broken login manager must not stop
+ * conversions: log it and carry on without the stored secrets (the legacy
+ * authSecret pref still works as a fallback).
+ */
+async function settleSecrets(): Promise<void> {
+  await secretsReady().catch((e: unknown) =>
+    log(`couldn't read saved credentials: ${(e as Error).message}`),
+  );
+}
+
 // Test seam: in-Zotero tests swap `fetch` for a scripted stand-in for
 // docling-serve so conversion paths can be exercised without a server.
 // Production code never sets this.
@@ -420,7 +431,7 @@ async function convertAttachmentInner(
   options?: { force?: boolean },
 ): Promise<ConvertResult> {
   // The auth secret lives in the login manager; make sure it is loaded.
-  await secretsReady();
+  await settleSecrets();
   const force = options?.force ?? false;
 
   // --- 1. Guard checks ---
@@ -764,7 +775,7 @@ export function normalizeServerUrl(
 export async function testServerConnection(
   serverUrl: string,
 ): Promise<{ ok: true; serverUrl: string } | { ok: false; message: string }> {
-  await secretsReady();
+  await settleSecrets();
   const normalized = normalizeServerUrl(serverUrl);
   if (!normalized.ok) return normalized;
   const url = normalized.url;

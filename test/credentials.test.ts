@@ -6,6 +6,11 @@ import {
   migrateUrlCredentials,
 } from "../src/modules/credentials";
 import {
+  setFetchOverrideForTests,
+  testServerConnection,
+} from "../src/modules/convert";
+import {
+  _resetSecretsCacheForTests,
   clearAllSecrets,
   getSecret,
   setLoginManagerForTests,
@@ -136,6 +141,31 @@ describe("credentials", function () {
         assert.strictEqual(get("authUsername"), "");
       } finally {
         setLoginManagerForTests(null);
+      }
+    });
+  });
+
+  describe("broken login manager", function () {
+    it("Test Connection still runs when saved credentials can't be read", async function () {
+      _resetSecretsCacheForTests();
+      setLoginManagerForTests({
+        searchLoginsAsync: async () => {
+          throw new Error("store unavailable");
+        },
+      });
+      setFetchOverrideForTests(
+        (async () =>
+          new Response(JSON.stringify({ status: "ok" }), {
+            status: 200,
+          })) as typeof fetch,
+      );
+      try {
+        const r = await testServerConnection("http://docling.test");
+        assert.isTrue(r.ok);
+      } finally {
+        setFetchOverrideForTests(null);
+        setLoginManagerForTests(null);
+        _resetSecretsCacheForTests();
       }
     });
   });
