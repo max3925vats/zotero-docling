@@ -24,7 +24,15 @@ import { enrichServerError } from "../utils/serverErrorHints";
 import { buildAuthHeader } from "./credentials";
 import { fetchConvertResult, timeoutMs } from "./transport";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
-import { secretsReady } from "../utils/secrets";
+import { getSecret, secretsReady } from "../utils/secrets";
+import {
+  buildRemotePicField,
+  readRemoteSettings,
+  remotePicEnabled,
+  resolveRemoteMode,
+  validateRemoteSettings,
+  type RemotePicField,
+} from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
 
@@ -181,6 +189,7 @@ export function buildConvertForm(
   pdfBytes: Uint8Array,
   filename: string,
   api: { FormData: typeof FormData; Blob: typeof Blob },
+  remote?: RemotePicField,
 ): FormData {
   const form = new api.FormData();
   form.append(
@@ -232,9 +241,14 @@ export function buildConvertForm(
   const vlmPreset = resolvePreset("vlmPreset", "vlmPresetCustom");
   if (vlmPreset) form.append("vlm_pipeline_preset", vlmPreset);
 
-  const doPicDesc = (getPref("doPictureDescription") ?? false) as boolean;
+  // A remote vision API (#17) replaces the local preset: docling-serve calls
+  // the provider itself, so description must be on and no preset is sent.
+  const doPicDesc =
+    !!remote || ((getPref("doPictureDescription") ?? false) as boolean);
   form.append("do_picture_description", String(doPicDesc));
-  if (doPicDesc) {
+  if (remote) {
+    form.append(remote.name, remote.value);
+  } else if (doPicDesc) {
     const picPreset = resolvePreset(
       "pictureDescriptionPreset",
       "pictureDescriptionPresetCustom",
@@ -269,6 +283,15 @@ export function buildConvertForm(
       Array.isArray(parsed)
     ) {
       throw new Error("advancedJson must be a JSON object");
+    }
+    // The two remote fields are mutually exclusive on the server; if Advanced
+    // JSON sets either, drop whatever the UI built for both.
+    if (
+      "picture_description_api" in parsed ||
+      "picture_description_custom_config" in parsed
+    ) {
+      form.delete("picture_description_api");
+      form.delete("picture_description_custom_config");
     }
     for (const [key, value] of Object.entries(parsed)) {
       if (value === null || value === undefined) continue;
@@ -459,9 +482,20 @@ async function convertAttachmentInner(
     return { status: "error", message: (e as Error).message };
   }
 
+  let remote: RemotePicField | undefined;
+  if (remotePicEnabled()) {
+    const settings = readRemoteSettings();
+    const key = getSecret("remote-picture-api");
+    const invalid = validateRemoteSettings(settings, key);
+    if (invalid) return { status: "error", message: invalid };
+    const mode = await resolveRemoteMode(serverUrl, api);
+    log(`remote picture API mode=${mode} provider=${settings.provider}`);
+    remote = buildRemotePicField(mode, settings, key);
+  }
+
   let form: FormData;
   try {
-    form = buildConvertForm(pdfBytes, filename, api);
+    form = buildConvertForm(pdfBytes, filename, api, remote);
   } catch (e) {
     return { status: "error", message: (e as Error).message };
   }
