@@ -75,6 +75,20 @@ pref-do-picture-desc =
     .label = Describe pictures with a VLM (do_picture_description)
 pref-pic-preset = Picture-description preset
 pref-preset-custom = Custom…
+pref-remote-pic-enabled =
+    .label = Describe pictures with a remote vision API instead of a local model
+pref-remote-pic-provider = Provider
+pref-remote-pic-url = API URL
+pref-remote-pic-model = Model
+pref-remote-pic-key = API key
+pref-remote-pic-prompt = Prompt
+pref-remote-pic-timeout = Timeout (seconds)
+pref-remote-pic-test =
+    .label = Test Remote API
+pref-remote-pic-help = docling-serve calls this API, not Zotero: start it with DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true (and DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG=true on 1.36+). The URL must be reachable from the docling-serve machine — in Docker, use host.docker.internal instead of localhost. The key is stored in Zotero's login manager and passes through docling-serve, so use HTTPS for a remote server. Test Remote API checks from this computer and is free.
+pref-remote-pic-confirm-title = Test connection to { $provider }?
+pref-remote-pic-confirm-body = This sends one request to { $url } using your API key, to check the URL, the key and the model name. Listing models is free, so no credits are used and no PDF or image is sent.
+pref-remote-pic-confirm-send = Send test request
 
 pref-async-title = Async transport
 pref-async-help = Submit the job to docling-serve's async endpoint and poll for results. Recommended for long VLM conversions that would otherwise time out an upstream proxy. The sync endpoint is faster for short PDFs.

@@ -2,10 +2,14 @@ import { assert } from "chai";
 import { config } from "../package.json";
 import { buildConvertForm } from "../src/modules/convert";
 import {
+  ALL_PREF_KEYS,
   authSecretLabelId,
   migrateLegacyCustomPreset,
 } from "../src/modules/preferenceScript";
-import { bindSecretField } from "../src/modules/remotePicPane";
+import {
+  bindSecretField,
+  providerDefaults,
+} from "../src/modules/remotePicPane";
 import { clearAllSecrets, getSecret, setSecret } from "../src/utils/secrets";
 
 // Audit H4 / M10: the auth secret label was relabelled with a bare Fluent ID
@@ -140,6 +144,40 @@ describe("prefs pane", function () {
       await setSecret("docling-serve-auth", "");
       refresh();
       assert.strictEqual(input.value, "");
+    });
+  });
+
+  describe("providerDefaults", function () {
+    it("returns the provider URL for presets and null for Custom", function () {
+      assert.deepEqual(providerDefaults("ollama"), {
+        url: "http://localhost:11434/v1/chat/completions",
+      });
+      assert.isNull(providerDefaults("custom"));
+    });
+  });
+
+  describe("remote prefs", function () {
+    const REMOTE = [
+      "remotePicApiEnabled",
+      "remotePicApiProvider",
+      "remotePicApiUrl",
+      "remotePicApiModel",
+      "remotePicApiPrompt",
+      "remotePicApiTimeoutSec",
+    ];
+
+    it("are all cleared by Reset", function () {
+      for (const k of REMOTE) assert.include(ALL_PREF_KEYS, k);
+    });
+
+    it("are all bound in the pane", async function () {
+      // Read the shipped XHTML as text; a missing preference="" binding would
+      // leave the field unsaved with no other symptom.
+      const url = `chrome://${config.addonRef}/content/preferences.xhtml`;
+      const src = await Zotero.File.getContentsFromURLAsync(url);
+      for (const k of REMOTE) {
+        assert.include(src, `preference="${k}"`, `${k} must be bound`);
+      }
     });
   });
 });

@@ -2,12 +2,14 @@
 // section (#17). Secrets aren't prefs any more, so these inputs are wired by
 // hand instead of with preference="…".
 
+import { getPref, setPref } from "../utils/prefs";
 import {
   getSecret,
   secretsReady,
   setSecret,
   type SecretKey,
 } from "../utils/secrets";
+import { PROVIDERS, type ProviderId } from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
 
@@ -45,5 +47,54 @@ export function bindSecretField(
       Zotero.debug(`${LOG} saving ${key} failed: ${(e as Error).message}`),
     );
   });
+  return refresh;
+}
+
+/** URL to fill in when a preset provider is chosen; null for Custom. */
+export function providerDefaults(provider: ProviderId): { url: string } | null {
+  if (provider === "custom") return null;
+  return { url: PROVIDERS[provider].url };
+}
+
+/**
+ * Show the remote fields only when the gate is on, disable the local preset
+ * (it isn't sent then), and fill the URL when a preset provider is picked.
+ */
+export function bindRemotePicSection(win: Window): () => void {
+  const doc = win.document;
+  const gate = doc.getElementById("zotero-docling-remote-pic-enabled") as any;
+  const section = doc.getElementById(
+    "zotero-docling-remote-pic-section",
+  ) as HTMLElement | null;
+  const provider = doc.getElementById(
+    "zotero-docling-remote-pic-provider",
+  ) as any;
+  const url = doc.getElementById(
+    "zotero-docling-remote-pic-url",
+  ) as HTMLInputElement | null;
+  const localPreset = doc.getElementById(
+    "zotero-docling-pic-preset-menu",
+  ) as any;
+  const refreshKey = bindSecretField(
+    win,
+    "zotero-docling-remote-pic-key",
+    "remote-picture-api",
+  );
+
+  const refresh = () => {
+    const on = Boolean(getPref("remotePicApiEnabled") ?? false);
+    if (section) section.hidden = !on;
+    if (localPreset) localPreset.disabled = on;
+    refreshKey();
+  };
+  // The checkbox writes its pref after "command" fires, so read it next tick.
+  gate?.addEventListener("command", () => setTimeout(refresh, 0));
+  provider?.addEventListener("command", () => {
+    const d = providerDefaults((provider.value || "custom") as ProviderId);
+    if (!d) return;
+    setPref("remotePicApiUrl", d.url);
+    if (url) url.value = d.url;
+  });
+  refresh();
   return refresh;
 }

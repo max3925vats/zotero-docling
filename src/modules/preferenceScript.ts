@@ -9,7 +9,7 @@ import { getPref, setPref } from "../utils/prefs";
 import { clearAllSecrets } from "../utils/secrets";
 import { FluentMessageId } from "../../typings/i10n";
 import { testServerConnection } from "./convert";
-import { bindSecretField } from "./remotePicPane";
+import { bindRemotePicSection, bindSecretField } from "./remotePicPane";
 import { clearCapabilitiesCache } from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
@@ -149,6 +149,7 @@ export function registerPrefsScripts(win: Window): void {
   keep(
     bindSecretField(win, "zotero-docling-auth-secret", "docling-serve-auth"),
   );
+  keep(bindRemotePicSection(win));
   keep(bindPresetDetail(win, "vlm", VLM_PRESET_DETAIL, "vlmPreset"));
   keep(
     bindPresetDetail(win, "pic", PIC_PRESET_DETAIL, "pictureDescriptionPreset"),
