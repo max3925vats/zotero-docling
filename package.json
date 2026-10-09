@@ -1,7 +1,7 @@
 {
   "name": "zotero-docling",
   "type": "module",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Convert Zotero PDF attachments to structured markdown via Docling",
   "config": {
     "addonName": "zotero-docling",
