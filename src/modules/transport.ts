@@ -6,8 +6,8 @@ import { getPref } from "../utils/prefs";
 import { enrichServerError } from "../utils/serverErrorHints";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
 import { toast } from "./ui";
+import { buildAuthHeader } from "./credentials";
 import {
-  buildAuthHeader,
   formatServerErrors,
   type ConvertResponse,
   type WebApis,

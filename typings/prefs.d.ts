@@ -12,7 +12,6 @@ declare namespace _ZoteroTypes {
       "skipIfExists": boolean;
       "authScheme": string;
       "authUsername": string;
-      "authSecret": string;
       "authHeaderName": string;
       "pipeline": string;
       "doOcr": boolean;

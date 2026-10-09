@@ -1,6 +1,9 @@
 import { initLocale, getString } from "./utils/locale";
 import { registerMenus, unregisterMenus } from "./modules/menu";
-import { migrateUrlCredentials } from "./modules/convert";
+import {
+  migrateAuthSecretPref,
+  migrateUrlCredentials,
+} from "./modules/credentials";
 import { registerNotifier, unregisterNotifier } from "./modules/notifier";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { onZoteroBlur, onZoteroFocus, toast } from "./modules/ui";
@@ -10,6 +13,7 @@ import {
 } from "./modules/windowListeners";
 import { createZToolkit } from "./utils/ztoolkit";
 import { getPref, setPref } from "./utils/prefs";
+import { loadSecrets } from "./utils/secrets";
 
 async function onStartup(): Promise<void> {
   await Promise.all([
@@ -19,7 +23,13 @@ async function onStartup(): Promise<void> {
   ]);
 
   initLocale();
-  safely("server URL credential migration", migrateUrlCredentials);
+  // Secrets live in the login manager (0.6.0+). Load them, then run the
+  // one-time migrations, before anything can send a request.
+  await safelyAsync("secrets and credential migration", async () => {
+    await loadSecrets();
+    await migrateUrlCredentials();
+    await migrateAuthSecretPref();
+  });
   registerPrefsPane();
   // Once for all windows: Zotero's MenuManager renders them per window.
   safely("menu registration", registerMenus);
@@ -69,6 +79,20 @@ function maybeShowFirstRunNudge(): void {
 function safely(label: string, step: () => void): void {
   try {
     step();
+  } catch (e) {
+    Zotero.debug(
+      `[zotero-docling] ${label} failed (non-fatal): ${(e as Error).message}`,
+    );
+  }
+}
+
+/** Async twin of safely(). */
+async function safelyAsync(
+  label: string,
+  step: () => Promise<void>,
+): Promise<void> {
+  try {
+    await step();
   } catch (e) {
     Zotero.debug(
       `[zotero-docling] ${label} failed (non-fatal): ${(e as Error).message}`,

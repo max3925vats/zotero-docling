@@ -4,11 +4,11 @@ pref("autoConvert", false);
 pref("skipIfExists", true);
 
 // Optional authentication against a protected docling-serve instance.
-// "none" (default) sends no auth header. Stored in plain text in the user's
-// Zotero profile — see SECURITY.md for the threat model.
+// "none" (default) sends no auth header. The secret itself (bearer token /
+// basic password / custom header value) is stored in the login manager, not
+// here — see SECURITY.md for the threat model.
 pref("authScheme", "none"); // "none" | "bearer" | "basic" | "custom"
 pref("authUsername", ""); // basic auth username
-pref("authSecret", ""); // bearer token / basic password / custom header value
 pref("authHeaderName", ""); // custom scheme only
 
 // Tier 1: essentials → docling-serve form fields
