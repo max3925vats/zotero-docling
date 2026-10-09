@@ -13,8 +13,10 @@ import {
 import {
   clearAllSecrets,
   getSecret,
+  providerKeyName,
   secretWritesSettled,
   setSecret,
+  type SecretKey,
 } from "../src/utils/secrets";
 
 // Audit H4 / M10: the auth secret label was relabelled with a bare Fluent ID
@@ -178,6 +180,22 @@ describe("prefs pane", function () {
       // No wait for the debounce: settling flushes the pending edit.
       await secretWritesSettled();
       assert.strictEqual(getSecret("docling-serve-auth"), "just-typed");
+    });
+
+    it("follows the selected provider's slot", async function () {
+      const input = newInput();
+      let key: SecretKey = providerKeyName("openai");
+      const field = bindSecretField(fakeWin(input), "x", () => key);
+      input.value = "sk-openai";
+      fire(input, "input");
+      // What the provider menulist does: save the old slot, then switch.
+      field.flush();
+      key = providerKeyName("ollama");
+      field();
+      assert.strictEqual(input.value, "");
+      await secretWritesSettled();
+      assert.strictEqual(getSecret(providerKeyName("openai")), "sk-openai");
+      assert.strictEqual(getSecret(providerKeyName("ollama")), "");
     });
   });
 

@@ -5,7 +5,11 @@ import {
   setFetchOverrideForTests,
 } from "../src/modules/convert";
 import { clearCapabilitiesCache } from "../src/modules/remotePictureApi";
-import { clearAllSecrets, setSecret } from "../src/utils/secrets";
+import {
+  clearAllSecrets,
+  providerKeyName,
+  setSecret,
+} from "../src/utils/secrets";
 import {
   cleanupTestItems,
   makeFileAttachment,
@@ -85,7 +89,7 @@ describe("remote picture API in conversions", function () {
     set("remotePicApiProvider", "openai");
     set("remotePicApiUrl", "https://api.openai.com/v1/chat/completions");
     set("remotePicApiModel", "gpt-x");
-    await setSecret("remote-picture-api", "sk-test");
+    await setSecret(providerKeyName("openai"), "sk-test");
   });
 
   afterEach(async function () {
@@ -134,5 +138,17 @@ describe("remote picture API in conversions", function () {
     assert.strictEqual(r.status, "error");
     assert.match((r as { message: string }).message, /model name/);
     assert.isUndefined(seen.form);
+  });
+
+  it("never sends another provider's key after switching provider", async function () {
+    // beforeEach stored an OpenAI key; Ollama has none of its own.
+    set("remotePicApiProvider", "ollama");
+    set("remotePicApiUrl", "http://localhost:11434/v1/chat/completions");
+    const seen: { form?: FormData } = {};
+    setFetchOverrideForTests(server(false, seen));
+    const r = await convertOne();
+    assert.strictEqual(r.status, "ok");
+    const v = JSON.parse(String(seen.form!.get("picture_description_api")));
+    assert.deepEqual(v.headers, {});
   });
 });

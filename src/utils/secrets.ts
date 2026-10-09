@@ -8,13 +8,33 @@
 // request, so values are cached in memory: loaded once at startup, updated on
 // every write.
 
-export type SecretKey = "docling-serve-auth" | "remote-picture-api";
+// Provider keys are stored one per provider (realm "remote-picture-api:<id>"),
+// so an OpenAI key is never sent to Ollama or a custom URL after the user
+// switches provider.
+export type SecretKey = "docling-serve-auth" | `remote-picture-api:${string}`;
+
+// Mirrors the keys of PROVIDERS in modules/remotePictureApi.ts (this file must
+// not import modules/; a test checks the two lists match).
+export const PROVIDER_SECRET_IDS = [
+  "openai",
+  "anthropic",
+  "openrouter",
+  "ollama",
+  "lmstudio",
+  "vllm",
+  "custom",
+] as const;
+
+/** Login-manager key holding one provider's API key. */
+export function providerKeyName(provider: string): SecretKey {
+  return `remote-picture-api:${provider}`;
+}
 
 const ORIGIN = "chrome://zotero-docling";
 const USERNAME = "zotero-docling";
 const ALL_KEYS: ReadonlyArray<SecretKey> = [
   "docling-serve-auth",
-  "remote-picture-api",
+  ...PROVIDER_SECRET_IDS.map(providerKeyName),
 ];
 
 const cache = new Map<SecretKey, string>();

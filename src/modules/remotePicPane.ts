@@ -6,6 +6,7 @@ import { getLocaleID } from "../utils/locale";
 import { getPref, setPref } from "../utils/prefs";
 import {
   getSecret,
+  providerKeyName,
   registerSecretFlush,
   secretsReady,
   secretWritesSettled,
@@ -29,13 +30,20 @@ const SAVE_DEBOUNCE_MS = 400;
 /** A refresher (for Reset) that can also save a pending edit right away. */
 export type SecretFieldBinding = (() => void) & { flush: () => void };
 
-/** Masked input ↔ login manager. Returns a refresher for Reset. */
+/**
+ * Masked input ↔ login manager. `key` may be a function so one input can
+ * follow the selected provider's slot. Returns a refresher for Reset.
+ */
 export function bindSecretField(
   win: Window,
   inputId: string,
-  key: SecretKey,
+  key: SecretKey | (() => SecretKey),
 ): SecretFieldBinding {
+  const keyOf = typeof key === "function" ? key : () => key;
   const input = win.document.getElementById(inputId) as HTMLInputElement | null;
+  // The slot the input's current text belongs to. A pending edit is saved
+  // here even if the provider has changed since.
+  let boundKey = keyOf();
   // Set once the user types, so a late cache load never overwrites an edit.
   let dirty = false;
   // Typed since the last save.
@@ -50,16 +58,18 @@ export function bindSecretField(
     cancelTimer();
     if (!input || !unsaved) return;
     unsaved = false;
-    void setSecret(key, input.value.trim()).catch((e) =>
-      Zotero.debug(`${LOG} saving ${key} failed: ${(e as Error).message}`),
+    const k = boundKey;
+    void setSecret(k, input.value.trim()).catch((e) =>
+      Zotero.debug(`${LOG} saving ${k} failed: ${(e as Error).message}`),
     );
   };
-  // Re-reads the store and drops any unsaved edit: Reset calls this after
-  // clearing, and must not have it re-saved.
+  // Re-reads the store for the current slot and drops any unsaved edit:
+  // Reset calls this after clearing, and must not have it re-saved.
   const refresh = () => {
     cancelTimer();
     unsaved = false;
-    if (input) input.value = getSecret(key);
+    boundKey = keyOf();
+    if (input) input.value = getSecret(boundKey);
   };
   const binding = Object.assign(refresh, { flush });
   if (!input) {
@@ -119,22 +129,29 @@ export function bindRemotePicSection(win: Window): () => void {
   const localPreset = doc.getElementById(
     "zotero-docling-pic-preset-menu",
   ) as any;
-  const refreshKey = bindSecretField(
-    win,
-    "zotero-docling-remote-pic-key",
-    "remote-picture-api",
+  // The key field shows the slot of the provider currently selected. The
+  // menulist's value updates before its pref, so prefer the element.
+  const currentProvider = (): ProviderId => {
+    const raw = String(provider?.value || readRemoteSettings().provider);
+    return (raw in PROVIDERS ? raw : "custom") as ProviderId;
+  };
+  const keyField = bindSecretField(win, "zotero-docling-remote-pic-key", () =>
+    providerKeyName(currentProvider()),
   );
 
   const refresh = () => {
     const on = Boolean(getPref("remotePicApiEnabled") ?? false);
     if (section) section.hidden = !on;
     if (localPreset) localPreset.disabled = on;
-    refreshKey();
+    keyField();
   };
   // The checkbox writes its pref after "command" fires, so read it next tick.
   gate?.addEventListener("command", () => setTimeout(refresh, 0));
   provider?.addEventListener("command", () => {
-    const d = providerDefaults((provider.value || "custom") as ProviderId);
+    // Save a pending edit to the old provider's slot, then show the new one's.
+    keyField.flush();
+    keyField();
+    const d = providerDefaults(currentProvider());
     if (!d) return;
     setPref("remotePicApiUrl", d.url);
     if (url) url.value = d.url;
@@ -190,7 +207,7 @@ export function bindRemotePicTest(win: Window): void {
     const s = readRemoteSettings();
     const r = await testRemoteApi(
       s,
-      getSecret("remote-picture-api"),
+      getSecret(providerKeyName(s.provider)),
       (p, u) => confirmPaidTest(win, p, u),
       getWebApis(),
     );

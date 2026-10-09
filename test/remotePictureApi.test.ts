@@ -16,6 +16,7 @@ import {
   validateRemoteSettings,
   type RemoteSettings,
 } from "../src/modules/remotePictureApi";
+import { PROVIDER_SECRET_IDS } from "../src/utils/secrets";
 
 const base: RemoteSettings = {
   provider: "openai",
@@ -129,6 +130,13 @@ describe("remotePictureApi #cold", function () {
       const v = JSON.parse(f.value);
       assert.strictEqual(v.url, PROVIDERS.openai.url);
       assert.deepEqual(v.params, { model: "m" });
+    });
+  });
+
+  describe("provider key slots", function () {
+    it("cover exactly the providers in PROVIDERS", function () {
+      // secrets.ts keeps its own copy of the ids (it can't import modules/).
+      assert.deepEqual([...PROVIDER_SECRET_IDS], Object.keys(PROVIDERS));
     });
   });
 

@@ -27,7 +27,12 @@ import {
 import { buildAuthHeader } from "./credentials";
 import { fetchConvertResult, timeoutMs } from "./transport";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
-import { getSecret, secretsReady, secretWritesSettled } from "../utils/secrets";
+import {
+  getSecret,
+  providerKeyName,
+  secretsReady,
+  secretWritesSettled,
+} from "../utils/secrets";
 import {
   buildRemotePicField,
   readRemoteSettings,
@@ -500,7 +505,9 @@ async function convertAttachmentInner(
   let remote: RemotePicField | undefined;
   if (remotePicEnabled()) {
     const settings = readRemoteSettings();
-    const key = getSecret("remote-picture-api");
+    // Each provider has its own key slot, so switching provider never sends
+    // the previous provider's key.
+    const key = getSecret(providerKeyName(settings.provider));
     const invalid = validateRemoteSettings(settings, key);
     if (invalid) return { status: "error", message: invalid };
     const mode = await resolveRemoteMode(serverUrl, api);

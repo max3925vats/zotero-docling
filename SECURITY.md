@@ -34,7 +34,7 @@ Reporters will be credited in the release notes unless they prefer to remain ano
 
 ## A note on stored credentials
 
-The plugin keeps two secrets: the optional docling-serve credential (Bearer token, Basic-auth password, or custom header value) and the API key for a remote vision provider. Both are stored in Zotero's login manager (`logins.json` in the profile directory, encrypted), not in `prefs.js` and not in the Config Editor. Versions before 0.6.0 stored the docling-serve credential in plain-text `prefs.js`; 0.6.0 moves it on first start and removes the old pref once the copy is verified.
+The plugin keeps two secrets: the optional docling-serve credential (Bearer token, Basic-auth password, or custom header value) and the API keys for remote vision providers (one per provider, so a key is only ever sent to the provider it was entered for). Both are stored in Zotero's login manager (`logins.json` in the profile directory, encrypted), not in `prefs.js` and not in the Config Editor. Versions before 0.6.0 stored the docling-serve credential in plain-text `prefs.js`; 0.6.0 moves it on first start and removes the old pref once the copy is verified.
 
 Practical implications:
 

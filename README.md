@@ -307,19 +307,21 @@ API instead. It is off by default.
 In **Settings → zotero-docling → Conversion options**, tick **Describe
 pictures with a remote vision API instead of a local model**, then fill in:
 
-| Provider   | API URL filled in for you                       | Key                       |
-| ---------- | ----------------------------------------------- | ------------------------- |
-| OpenAI     | `https://api.openai.com/v1/chat/completions`    | required                  |
-| Anthropic  | `https://api.anthropic.com/v1/chat/completions` | required                  |
-| OpenRouter | `https://openrouter.ai/api/v1/chat/completions` | required                  |
-| Ollama     | `http://localhost:11434/v1/chat/completions`    | none                      |
-| LM Studio  | `http://localhost:1234/v1/chat/completions`     | none                      |
-| vLLM       | `http://localhost:8000/v1/chat/completions`     | if you set one            |
-| Custom     | whatever you enter                              | if the endpoint needs one |
+| Provider   | API URL filled in for you                       | Key                                                     |
+| ---------- | ----------------------------------------------- | ------------------------------------------------------- |
+| OpenAI     | `https://api.openai.com/v1/chat/completions`    | required                                                |
+| Anthropic  | `https://api.anthropic.com/v1/chat/completions` | required                                                |
+| OpenRouter | `https://openrouter.ai/api/v1/chat/completions` | required                                                |
+| Ollama     | `http://localhost:11434/v1/chat/completions`    | optional (only sent if you enter one for this provider) |
+| LM Studio  | `http://localhost:1234/v1/chat/completions`     | optional (only sent if you enter one for this provider) |
+| vLLM       | `http://localhost:8000/v1/chat/completions`     | optional (only sent if you enter one for this provider) |
+| Custom     | whatever you enter                              | optional (only sent if you enter one for this provider) |
 
 - **Model** is required and has no default (model names change too often).
   Use a vision-capable model.
-- **API key** is stored in Zotero's login manager, not in prefs.
+- **API key** is stored in Zotero's login manager, not in prefs, and saved
+  per provider: switching provider shows that provider's key, so one
+  provider's key is never sent to another.
 - **Prompt** defaults to "Describe this image in a few sentences."
   **Timeout** is per image, in seconds (default 120).
 - **Advanced JSON** still overrides anything set here.
