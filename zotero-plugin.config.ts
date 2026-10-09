@@ -15,6 +15,27 @@ export default defineConfig({
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
   build: {
+    // Keep 0.4.0 in update.json next to the current release: Zotero offers
+    // each user the newest entry compatible with their version, so Zotero 7
+    // users (0.5.0+ requires Zotero 8) still get 0.4.0 — including anyone
+    // updating from 0.3.x. Hash is the published v0.4.0 asset's.
+    makeUpdateJson: {
+      updates: [
+        {
+          version: "0.4.0",
+          update_link:
+            "https://github.com/max3925vats/zotero-docling/releases/download/v0.4.0/zotero-docling.xpi",
+          update_hash:
+            "sha512:559b919251aa81913b9014ce0141a7a31a4bd6cf8c24abb4fbd4e5ffcced92ee6151e314d9f56618e39a2c0f831e648c837c9f97e31da652b3b335ca2924679b",
+          applications: {
+            zotero: {
+              strict_min_version: "6.999",
+              strict_max_version: "10.0.*",
+            },
+          },
+        },
+      ],
+    },
     assets: ["addon/**/*.*"],
     define: {
       ...pkg.config,
