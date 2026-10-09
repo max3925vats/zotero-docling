@@ -2,6 +2,7 @@
 // section (#17). Secrets aren't prefs any more, so these inputs are wired by
 // hand instead of with preference="…".
 
+import { getLocaleID } from "../utils/locale";
 import { getPref, setPref } from "../utils/prefs";
 import {
   getSecret,
@@ -9,7 +10,13 @@ import {
   setSecret,
   type SecretKey,
 } from "../utils/secrets";
-import { PROVIDERS, type ProviderId } from "./remotePictureApi";
+import { getWebApis } from "./convert";
+import {
+  PROVIDERS,
+  readRemoteSettings,
+  testRemoteApi,
+  type ProviderId,
+} from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
 
@@ -97,4 +104,62 @@ export function bindRemotePicSection(win: Window): () => void {
   });
   refresh();
   return refresh;
+}
+
+/** Confirm dialog for paid providers; Cancel is the default button. */
+async function confirmPaidTest(
+  win: Window,
+  provider: string,
+  url: string,
+): Promise<boolean> {
+  const Services = (globalThis as any).Services;
+  if (!Services?.prompt?.confirmEx) return false; // fail closed
+  let [title, body, send] = [
+    `Test connection to ${provider}?`,
+    `This sends one request to ${url} using your API key, to check the URL, the key and the model name. Listing models is free, so no credits are used and no PDF or image is sent.`,
+    "Send test request",
+  ];
+  try {
+    const v = await (win.document as any).l10n?.formatValues?.([
+      { id: getLocaleID("pref-remote-pic-confirm-title"), args: { provider } },
+      { id: getLocaleID("pref-remote-pic-confirm-body"), args: { url } },
+      { id: getLocaleID("pref-remote-pic-confirm-send") },
+    ]);
+    if (v?.[0]) title = v[0];
+    if (v?.[1]) body = v[1];
+    if (v?.[2]) send = v[2];
+  } catch {
+    /* keep English */
+  }
+  const P = Services.prompt;
+  const flags =
+    P.BUTTON_POS_0 * P.BUTTON_TITLE_IS_STRING +
+    P.BUTTON_POS_1 * P.BUTTON_TITLE_CANCEL +
+    P.BUTTON_POS_1_DEFAULT;
+  // confirmEx returns the index of the pressed button: 0 = Send.
+  return P.confirmEx(win, title, body, flags, send, null, null, null, {}) === 0;
+}
+
+export function bindRemotePicTest(win: Window): void {
+  const btn = win.document.getElementById("zotero-docling-remote-pic-test");
+  const out = win.document.getElementById(
+    "zotero-docling-remote-pic-test-result",
+  );
+  if (!btn || !out) return;
+  btn.addEventListener("command", async () => {
+    out.textContent = "Testing…";
+    const s = readRemoteSettings();
+    const r = await testRemoteApi(
+      s,
+      getSecret("remote-picture-api"),
+      (p, u) => confirmPaidTest(win, p, u),
+      getWebApis(),
+    );
+    if ("cancelled" in r) out.textContent = "Cancelled — nothing was sent.";
+    else if (!r.ok) out.textContent = `✗ ${r.message}`;
+    else
+      out.textContent = r.modelListed
+        ? `✓ Connected; model "${s.model}" found.`
+        : `✓ Connected, but "${s.model}" isn't in the provider's model list — check the name.`;
+  });
 }

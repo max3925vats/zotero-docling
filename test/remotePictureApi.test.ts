@@ -8,6 +8,7 @@ import {
   clearCapabilitiesCache,
   readRemoteSettings,
   resolveRemoteMode,
+  testRemoteApi,
   DEFAULT_PROMPT,
   headersFor,
   modelsUrl,
@@ -268,5 +269,111 @@ describe("readRemoteSettings", function () {
   it("treats an unknown provider as custom", function () {
     Zotero.Prefs.set(`${P()}.remotePicApiProvider`, "nonsense", true);
     assert.strictEqual(readRemoteSettings().provider, "custom");
+  });
+});
+
+describe("testRemoteApi", function () {
+  const s = {
+    provider: "openai" as const,
+    url: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-x",
+    prompt: "",
+    timeoutSec: 120,
+  };
+  let seen: {
+    url?: string;
+    headers?: Record<string, string>;
+    method?: string;
+  } = {};
+  function serve(res: () => Response): void {
+    seen = {};
+    setFetchOverrideForTests((async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      seen = {
+        url: String(input),
+        headers: init?.headers as Record<string, string>,
+        method: init?.method,
+      };
+      return res();
+    }) as typeof fetch);
+  }
+  const list =
+    (...ids: string[]) =>
+    () =>
+      new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }), {
+        status: 200,
+      });
+
+  afterEach(function () {
+    setFetchOverrideForTests(null);
+  });
+
+  it("asks before contacting a paid provider and sends nothing on Cancel", async function () {
+    serve(list("gpt-x"));
+    let asked = "";
+    const r = await testRemoteApi(
+      s,
+      "sk",
+      async (p, u) => {
+        asked = `${p} ${u}`;
+        return false;
+      },
+      getWebApis(),
+    );
+    assert.deepEqual(r, { ok: false, cancelled: true });
+    assert.strictEqual(asked, "OpenAI https://api.openai.com/v1/models");
+    assert.isUndefined(seen.url);
+  });
+
+  it("GETs /models with the provider's auth after confirmation", async function () {
+    serve(list("gpt-x"));
+    const r = await testRemoteApi(s, "sk", async () => true, getWebApis());
+    assert.deepEqual(r, { ok: true, modelListed: true });
+    assert.strictEqual(seen.url, "https://api.openai.com/v1/models");
+    assert.strictEqual(seen.method, "GET");
+    assert.deepEqual(seen.headers, { Authorization: "Bearer sk" });
+  });
+
+  it("does not ask for free local providers", async function () {
+    serve(list("qwen2.5vl:3b"));
+    let asked = false;
+    const r = await testRemoteApi(
+      {
+        ...s,
+        provider: "ollama",
+        url: "http://localhost:11434/v1/chat/completions",
+        model: "qwen2.5vl:3b",
+      },
+      "",
+      async () => ((asked = true), true),
+      getWebApis(),
+    );
+    assert.isFalse(asked);
+    assert.deepEqual(r, { ok: true, modelListed: true });
+  });
+
+  it("reports a model missing from the list without failing", async function () {
+    serve(list("other"));
+    const r = await testRemoteApi(s, "sk", async () => true, getWebApis());
+    assert.deepEqual(r, { ok: true, modelListed: false });
+  });
+
+  it("explains a rejected key", async function () {
+    serve(() => new Response("{}", { status: 401 }));
+    const r = await testRemoteApi(s, "bad", async () => true, getWebApis());
+    assert.isFalse(r.ok);
+    assert.match((r as { message: string }).message, /key was rejected/i);
+  });
+
+  it("refuses a URL it can't turn into /models", async function () {
+    const r = await testRemoteApi(
+      { ...s, provider: "custom", url: "https://x.test/describe" },
+      "",
+      async () => true,
+      getWebApis(),
+    );
+    assert.match((r as { message: string }).message, /chat\/completions/);
   });
 });

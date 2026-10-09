@@ -242,3 +242,73 @@ export async function resolveRemoteMode(
   capsCache.set(serverUrl, { mode, at: Date.now() });
   return mode;
 }
+
+export type RemoteTestResult =
+  | { ok: true; modelListed: boolean }
+  | { ok: false; message: string }
+  | { ok: false; cancelled: true };
+
+/**
+ * Free check from this computer: GET …/models with the provider's auth.
+ * Paid providers ask first (issue #17: "Test" implies intent, not consent).
+ * It can't prove docling-serve reaches the provider — see the pane help.
+ */
+export async function testRemoteApi(
+  s: RemoteSettings,
+  key: string,
+  confirm: (provider: string, url: string) => Promise<boolean>,
+  api: WebApis,
+): Promise<RemoteTestResult> {
+  const url = modelsUrl(s.url);
+  if (!url) {
+    return {
+      ok: false,
+      message:
+        "The API URL should end in /chat/completions (OpenAI-compatible).",
+    };
+  }
+  const p = PROVIDERS[s.provider];
+  if (p.paid && !(await confirm(p.label, url))) {
+    return { ok: false, cancelled: true };
+  }
+  try {
+    return await withRequestTimeout(
+      timeoutMs("healthTimeoutSec", 30),
+      async (signal) => {
+        const r = await api.fetch(url, {
+          method: "GET",
+          headers: headersFor(s.provider, key),
+          signal,
+        });
+        if (r.status === 401 || r.status === 403) {
+          return {
+            ok: false as const,
+            message: `HTTP ${r.status}: the API key was rejected.`,
+          };
+        }
+        if (!r.ok) {
+          return {
+            ok: false as const,
+            message: `HTTP ${r.status} from ${url}`,
+          };
+        }
+        let ids: string[];
+        try {
+          const body = JSON.parse(await r.text());
+          ids = Array.isArray(body?.data)
+            ? body.data.map((m: { id?: unknown }) => String(m?.id ?? ""))
+            : [];
+        } catch {
+          ids = [];
+        }
+        return { ok: true as const, modelListed: ids.includes(s.model.trim()) };
+      },
+      api.AbortController,
+    );
+  } catch (e) {
+    return {
+      ok: false,
+      message: `Couldn't reach ${url}: ${(e as Error).message}`,
+    };
+  }
+}

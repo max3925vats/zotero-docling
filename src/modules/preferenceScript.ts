@@ -9,7 +9,11 @@ import { getPref, setPref } from "../utils/prefs";
 import { clearAllSecrets } from "../utils/secrets";
 import { FluentMessageId } from "../../typings/i10n";
 import { testServerConnection } from "./convert";
-import { bindRemotePicSection, bindSecretField } from "./remotePicPane";
+import {
+  bindRemotePicSection,
+  bindRemotePicTest,
+  bindSecretField,
+} from "./remotePicPane";
 import { clearCapabilitiesCache } from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
@@ -136,6 +140,7 @@ export function registerPrefsScripts(win: Window): void {
   addon.data.prefs.window = win;
 
   bindTestConnection(win);
+  bindRemotePicTest(win);
   // Each binder returns the function that re-syncs its piece of the pane
   // from prefs; Reset re-runs them all after clearing (audit M12).
   const refreshers: Array<() => void> = [];
