@@ -60,6 +60,20 @@ function newLoginInfo(key: SecretKey, value: string): unknown {
   return new LoginInfo(ORIGIN, null, key, USERNAME, value, "", "");
 }
 
+/**
+ * Remove one login. Firefox 140's nsILoginManager only has the synchronous
+ * removeLogin(); removeLoginAsync() is used when a store provides it (tests,
+ * newer Firefox), so both shapes work.
+ */
+async function removeOne(login: unknown): Promise<void> {
+  const lm = logins();
+  if (typeof lm.removeLoginAsync === "function") {
+    await lm.removeLoginAsync(login);
+  } else {
+    lm.removeLogin(login);
+  }
+}
+
 async function findLogins(key: SecretKey): Promise<any[]> {
   return (
     (await logins().searchLoginsAsync({ origin: ORIGIN, httpRealm: key })) ?? []
@@ -121,7 +135,7 @@ async function writeSecret(key: SecretKey, value: string): Promise<void> {
   generation.set(key, (generation.get(key) ?? 0) + 1);
   const old = await findLogins(key);
   try {
-    for (const login of old) await logins().removeLoginAsync(login);
+    for (const login of old) await removeOne(login);
     // The store has no login for this key now, so the cache must not still
     // report the old value.
     cache.set(key, "");

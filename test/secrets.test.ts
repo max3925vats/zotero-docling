@@ -107,7 +107,8 @@ describe("secrets store", function () {
     let adds = 0;
     setLoginManagerForTests({
       searchLoginsAsync: (q: unknown) => real.searchLoginsAsync(q),
-      removeLoginAsync: (l: unknown) => real.removeLoginAsync(l),
+      // Sync removeLogin only, like real Firefox 140 (no removeLoginAsync).
+      removeLogin: (l: unknown) => real.removeLogin(l),
       addLoginAsync: (l: unknown) => {
         adds += 1;
         // Fail only the first add, so the restore (second add) can succeed.
@@ -130,7 +131,7 @@ describe("secrets store", function () {
     const real = (globalThis as any).Services.logins;
     setLoginManagerForTests({
       searchLoginsAsync: (q: unknown) => real.searchLoginsAsync(q),
-      removeLoginAsync: (l: unknown) => real.removeLoginAsync(l),
+      removeLogin: (l: unknown) => real.removeLogin(l),
       addLoginAsync: () => {
         throw new Error("disk full");
       },
