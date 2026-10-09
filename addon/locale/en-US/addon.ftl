@@ -1,15 +1,9 @@
-menuitem-convert =
-    .label = Convert with Docling
-menuitem-reconvert =
-    .label = Re-convert with Docling (replace)
-menuitem-export-md-zip =
-    .label = Export markdown to .zip
-menuitem-tools-export-md-zip =
-    .label = Docling: Export markdown to .zip…
-menuitem-remove-images =
-    .label = Remove images from markdown
-menuitem-tools-remove-images =
-    .label = Docling: Remove images from markdown…
+menuitem-convert = Convert with Docling
+menuitem-reconvert = Re-convert with Docling (replace)
+menuitem-export-md-zip = Export markdown to .zip
+menuitem-tools-export-md-zip = Docling: Export markdown to .zip…
+menuitem-remove-images = Remove images from markdown
+menuitem-tools-remove-images = Docling: Remove images from markdown…
 pref-pane-label = zotero-docling
 
 ## Shared

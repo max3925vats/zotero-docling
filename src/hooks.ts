@@ -83,10 +83,12 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // a mainWindow.ftl, so omitting it avoids "Missing resource" log spam.)
 
   // MenuManager menu labels are resolved by the window's own Fluent
-  // localization, so our addon.ftl must be loaded into every main window.
+  // localization, so menus.ftl must be loaded into every main window. It's a
+  // separate file (not addon.ftl) because a version switch without a restart
+  // can serve the previous version's cached addon.ftl.
   safely("menu strings", () =>
     (win as any).MozXULElement.insertFTLIfNeeded(
-      `${addon.data.config.addonRef}-addon.ftl`,
+      `${addon.data.config.addonRef}-menus.ftl`,
     ),
   );
 

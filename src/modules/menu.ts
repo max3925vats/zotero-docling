@@ -476,7 +476,7 @@ async function onReconvertClick(items?: Zotero.Item[]): Promise<void> {
  * Register our entries with Zotero's MenuManager (Zotero 8+). Zotero renders
  * them in every main window and removes them itself when the plugin is
  * disabled, so there's no per-window bookkeeping. Labels are Fluent messages
- * with a `.label` attribute from addon.ftl, which hooks.ts loads into each
+ * with a `.label` attribute from menus.ftl, which hooks.ts loads into each
  * main window.
  */
 export function registerMenus(): void {
@@ -494,7 +494,7 @@ export function registerMenus(): void {
     menus: [
       {
         menuType: "menuitem",
-        l10nID: getLocaleID("menuitem-convert"),
+        l10nID: getLocaleID("menu-convert"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(shouldShowConvert(items(ctx))),
         onCommand: (_e: Event, ctx: any) => void onConvertClick(items(ctx)),
@@ -503,7 +503,7 @@ export function registerMenus(): void {
         // Only when there's already a matching .md to replace; otherwise
         // this would duplicate plain Convert.
         menuType: "menuitem",
-        l10nID: getLocaleID("menuitem-reconvert"),
+        l10nID: getLocaleID("menu-reconvert"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(shouldShowReconvert(items(ctx))),
         onCommand: (_e: Event, ctx: any) => void onReconvertClick(items(ctx)),
@@ -512,7 +512,7 @@ export function registerMenus(): void {
         // Shown whenever the selection resolves to ≥1 PDF; the export
         // handler deals with missing markdown via a confirm dialog.
         menuType: "menuitem",
-        l10nID: getLocaleID("menuitem-export-md-zip"),
+        l10nID: getLocaleID("menu-export-md-zip"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(shouldShowConvert(items(ctx))),
         onCommand: (_e: Event, ctx: any) =>
@@ -520,7 +520,7 @@ export function registerMenus(): void {
       },
       {
         menuType: "menuitem",
-        l10nID: getLocaleID("menuitem-remove-images"),
+        l10nID: getLocaleID("menu-remove-images"),
         onShowing: (_e: Event, ctx: any) =>
           ctx.setVisible(resolveMdTargets(items(ctx)).length > 0),
         onCommand: (_e: Event, ctx: any) =>
@@ -537,12 +537,12 @@ export function registerMenus(): void {
     menus: [
       {
         menuType: "menuitem",
-        l10nID: getLocaleID("menuitem-tools-export-md-zip"),
+        l10nID: getLocaleID("menu-tools-export-md-zip"),
         onCommand: () => void onExportMarkdownZipClick("tools"),
       },
       {
         menuType: "menuitem",
-        l10nID: getLocaleID("menuitem-tools-remove-images"),
+        l10nID: getLocaleID("menu-tools-remove-images"),
         onCommand: () => void onRemoveImagesClick("tools"),
       },
     ],
