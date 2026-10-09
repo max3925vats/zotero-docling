@@ -6,7 +6,7 @@ import {
   makeParentItem,
 } from "./_zoteroItems";
 
-// v0.5.0: menus go through Zotero's own MenuManager (Zotero 8+) instead of
+// v0.5.0: menus go through Zotero's own MenuManager (labels in menus.ftl) (Zotero 8+) instead of
 // injecting elements into each window. These tests drive the LIVE plugin
 // (the real build): ask Zotero to render its item and Tools menus the way it
 // does on right-click / menu open, then check our entries.
@@ -52,11 +52,11 @@ describe("menus via Zotero.MenuManager", function () {
 
     const popup = render("zotero-itemmenu", "main/library/item", [pdf]);
 
-    const convert = entry(popup, "menuitem-convert");
+    const convert = entry(popup, "menu-convert");
     assert.ok(convert, "Convert entry must be rendered");
     assert.isFalse(convert!.hidden, "Convert must be visible for a PDF");
     assert.isTrue(
-      entry(popup, "menuitem-reconvert")?.hidden ?? true,
+      entry(popup, "menu-reconvert")?.hidden ?? true,
       "Re-convert must be hidden without an existing .md",
     );
   });
@@ -68,24 +68,39 @@ describe("menus via Zotero.MenuManager", function () {
 
     const popup = render("zotero-itemmenu", "main/library/item", [pdf]);
 
-    assert.isFalse(entry(popup, "menuitem-reconvert")?.hidden ?? true);
+    assert.isFalse(entry(popup, "menu-reconvert")?.hidden ?? true);
   });
 
   it("adds the Tools menu entries", function () {
     const popup = render("menu_ToolsPopup", "main/menubar/tools", []);
-    assert.ok(entry(popup, "menuitem-tools-export-md-zip"));
-    assert.ok(entry(popup, "menuitem-tools-remove-images"));
+    assert.ok(entry(popup, "menu-tools-export-md-zip"));
+    assert.ok(entry(popup, "menu-tools-remove-images"));
   });
 
   it("labels resolve to real text in the main window", async function () {
     const parent = await makeParentItem();
     const pdf = await makeFileAttachment(parent, "l.pdf", "application/pdf");
     const popup = render("zotero-itemmenu", "main/library/item", [pdf]);
-    const convert = entry(popup, "menuitem-convert")!;
+    const convert = entry(popup, "menu-convert")!;
 
     await Zotero.getMainWindow().document.l10n!.translateElements([convert]);
 
     assert.strictEqual(convert.getAttribute("label"), "Convert with Docling");
+  });
+
+  it("keeps addon.ftl's menu strings in the 0.4.0 shape", function () {
+    // 0.4.0 and 0.5.0 share the file name zoteroDocling-addon.ftl, and a
+    // version switch without a restart can serve the other version's cached
+    // copy. Keeping those messages identical means either version can read
+    // it; 0.5.0's menu labels live in menus.ftl, which 0.4.0 never had.
+    const l10n = new (Zotero.getMainWindow() as any).Localization(
+      [`${config.addonRef}-addon.ftl`],
+      true,
+    );
+    assert.strictEqual(
+      l10n.formatValueSync(id("menuitem-convert")),
+      "Convert with Docling",
+    );
   });
 
   it("no longer injects its own menu elements", function () {

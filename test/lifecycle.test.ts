@@ -116,9 +116,7 @@ describe("lifecycle", function () {
         skipGrouping: true,
       });
       assert.isNull(
-        popup.querySelector(
-          `[data-l10n-id="${config.addonRef}-menuitem-convert"]`,
-        ),
+        popup.querySelector(`[data-l10n-id="${config.addonRef}-menu-convert"]`),
         "menus must be unregistered from Zotero.MenuManager",
       );
     });
