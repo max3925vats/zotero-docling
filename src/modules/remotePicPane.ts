@@ -6,7 +6,9 @@ import { getLocaleID } from "../utils/locale";
 import { getPref, setPref } from "../utils/prefs";
 import {
   getSecret,
+  registerSecretFlush,
   secretsReady,
+  secretWritesSettled,
   setSecret,
   type SecretKey,
 } from "../utils/secrets";
@@ -20,21 +22,49 @@ import {
 
 const LOG = "[zotero-docling]";
 
+// How long typing must pause before the field is saved. Short enough that a
+// quick Test click or window close finds the value saved (both also flush).
+const SAVE_DEBOUNCE_MS = 400;
+
+/** A refresher (for Reset) that can also save a pending edit right away. */
+export type SecretFieldBinding = (() => void) & { flush: () => void };
+
 /** Masked input ↔ login manager. Returns a refresher for Reset. */
 export function bindSecretField(
   win: Window,
   inputId: string,
   key: SecretKey,
-): () => void {
+): SecretFieldBinding {
   const input = win.document.getElementById(inputId) as HTMLInputElement | null;
   // Set once the user types, so a late cache load never overwrites an edit.
   let dirty = false;
+  // Typed since the last save.
+  let unsaved = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const cancelTimer = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  const flush = () => {
+    cancelTimer();
+    if (!input || !unsaved) return;
+    unsaved = false;
+    void setSecret(key, input.value.trim()).catch((e) =>
+      Zotero.debug(`${LOG} saving ${key} failed: ${(e as Error).message}`),
+    );
+  };
+  // Re-reads the store and drops any unsaved edit: Reset calls this after
+  // clearing, and must not have it re-saved.
   const refresh = () => {
+    cancelTimer();
+    unsaved = false;
     if (input) input.value = getSecret(key);
   };
+  const binding = Object.assign(refresh, { flush });
   if (!input) {
     Zotero.debug(`${LOG} prefs: ${inputId} not found`);
-    return refresh;
+    return binding;
   }
   refresh();
   // The cache may still be loading when the pane opens. Re-fill once it is
@@ -44,17 +74,24 @@ export function bindSecretField(
       if (!dirty) refresh();
     })
     .catch(() => {});
+  // Save shortly after typing stops, and at once on "change" (blur/Enter).
+  // "change" alone loses edits: closing the window may never fire it, and a
+  // Test click could read the old value.
   input.addEventListener("input", () => {
     dirty = true;
+    unsaved = true;
+    cancelTimer();
+    timer = setTimeout(flush, SAVE_DEBOUNCE_MS);
   });
-  // Save on "change" (blur or Enter), not on each keystroke, so the store
-  // isn't written for every character typed.
-  input.addEventListener("change", () => {
-    void setSecret(key, input.value.trim()).catch((e) =>
-      Zotero.debug(`${LOG} saving ${key} failed: ${(e as Error).message}`),
-    );
-  });
-  return refresh;
+  input.addEventListener("change", flush);
+  const unregister = registerSecretFlush(flush);
+  const onClose = () => {
+    flush();
+    unregister();
+  };
+  win.addEventListener?.("unload", onClose);
+  win.addEventListener?.("pagehide", onClose);
+  return binding;
 }
 
 /** URL to fill in when a preset provider is chosen; null for Custom. */
@@ -148,6 +185,8 @@ export function bindRemotePicTest(win: Window): void {
   if (!btn || !out) return;
   btn.addEventListener("command", async () => {
     out.textContent = "Testing…";
+    // Save a just-typed key before reading it.
+    await secretWritesSettled();
     const s = readRemoteSettings();
     const r = await testRemoteApi(
       s,

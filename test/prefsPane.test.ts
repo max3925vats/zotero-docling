@@ -10,7 +10,12 @@ import {
   bindSecretField,
   providerDefaults,
 } from "../src/modules/remotePicPane";
-import { clearAllSecrets, getSecret, setSecret } from "../src/utils/secrets";
+import {
+  clearAllSecrets,
+  getSecret,
+  secretWritesSettled,
+  setSecret,
+} from "../src/utils/secrets";
 
 // Audit H4 / M10: the auth secret label was relabelled with a bare Fluent ID
 // (blank label), and each preset's menulist and its "custom" text box were
@@ -144,6 +149,35 @@ describe("prefs pane", function () {
       await setSecret("docling-serve-auth", "");
       refresh();
       assert.strictEqual(input.value, "");
+    });
+
+    function newInput(): HTMLInputElement {
+      return Zotero.getMainWindow().document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "input",
+      ) as HTMLInputElement;
+    }
+    const fire = (input: HTMLInputElement, type: string) =>
+      input.dispatchEvent(new (Zotero.getMainWindow() as any).Event(type));
+
+    it("saves typed text after a short pause, without a change event", async function () {
+      const input = newInput();
+      bindSecretField(fakeWin(input), "x", "docling-serve-auth");
+      input.value = "typed";
+      fire(input, "input");
+      await new Promise((r) => setTimeout(r, 600));
+      await secretWritesSettled();
+      assert.strictEqual(getSecret("docling-serve-auth"), "typed");
+    });
+
+    it("a reader that settles right after typing sees the new value", async function () {
+      const input = newInput();
+      bindSecretField(fakeWin(input), "x", "docling-serve-auth");
+      input.value = "just-typed";
+      fire(input, "input");
+      // No wait for the debounce: settling flushes the pending edit.
+      await secretWritesSettled();
+      assert.strictEqual(getSecret("docling-serve-auth"), "just-typed");
     });
   });
 

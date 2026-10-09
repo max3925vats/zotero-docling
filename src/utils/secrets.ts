@@ -118,6 +118,36 @@ export function getSecret(key: SecretKey): string {
   return cache.get(key) ?? "";
 }
 
+// Prefs-pane fields with an edit that isn't saved yet (typed, debounce still
+// pending). secretWritesSettled() flushes them first, so a reader never sees
+// the value from before the user's last keystrokes.
+const pendingFlushes = new Set<() => void>();
+
+/** Register a "save now if edited" callback; returns the unregister function. */
+export function registerSecretFlush(flush: () => void): () => void {
+  pendingFlushes.add(flush);
+  return () => pendingFlushes.delete(flush);
+}
+
+/**
+ * Resolves once every queued write (to `key`, or to all keys) has finished,
+ * after first flushing unsaved pane edits. Never rejects: a failed write has
+ * already been reported to whoever started it.
+ */
+export function secretWritesSettled(key?: SecretKey): Promise<void> {
+  for (const flush of [...pendingFlushes]) {
+    try {
+      flush();
+    } catch {
+      // A closed window's field can throw; its edit is lost either way.
+    }
+  }
+  const chains = key
+    ? [writeChains.get(key) ?? Promise.resolve()]
+    : [...writeChains.values()];
+  return Promise.all(chains).then(() => undefined);
+}
+
 /** Store (or, for "", remove) a secret. Replaces rather than duplicates. */
 export function setSecret(key: SecretKey, value: string): Promise<void> {
   // Queue behind any earlier write to this key. The stored chain never rejects,

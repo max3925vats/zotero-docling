@@ -27,7 +27,7 @@ import {
 import { buildAuthHeader } from "./credentials";
 import { fetchConvertResult, timeoutMs } from "./transport";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
-import { getSecret, secretsReady } from "../utils/secrets";
+import { getSecret, secretsReady, secretWritesSettled } from "../utils/secrets";
 import {
   buildRemotePicField,
   readRemoteSettings,
@@ -58,14 +58,15 @@ function log(...args: unknown[]): void {
 }
 
 /**
- * Make sure the secrets cache is loaded. A broken login manager must not stop
- * conversions: log it and carry on without the stored secrets (the legacy
- * authSecret pref still works as a fallback).
+ * Make sure the secrets cache is loaded and holds the latest edits. A broken
+ * login manager must not stop conversions: log it and carry on without the
+ * stored secrets (the legacy authSecret pref still works as a fallback).
  */
 async function settleSecrets(): Promise<void> {
   await secretsReady().catch((e: unknown) =>
     log(`couldn't read saved credentials: ${(e as Error).message}`),
   );
+  await secretWritesSettled();
 }
 
 // Test seam: in-Zotero tests swap `fetch` for a scripted stand-in for

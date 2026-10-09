@@ -6,6 +6,7 @@ import {
   loadSecrets,
   readStoredSecret,
   secretsReady,
+  secretWritesSettled,
   setLoginManagerForTests,
   setSecret,
 } from "../src/utils/secrets";
@@ -158,5 +159,16 @@ describe("secrets store", function () {
     assert.lengthOf(found, 1);
     assert.strictEqual(found[0].password, "second");
     assert.strictEqual(getSecret("remote-picture-api"), "second");
+  });
+
+  it("secretWritesSettled waits for a write that was not awaited", async function () {
+    // The pane saves without awaiting; a reader that settles first must see
+    // the new value, not the one from before the write.
+    void setSecret("remote-picture-api", "fresh");
+    await secretWritesSettled();
+    assert.strictEqual(getSecret("remote-picture-api"), "fresh");
+    void setSecret("docling-serve-auth", "tok");
+    await secretWritesSettled("docling-serve-auth");
+    assert.strictEqual(getSecret("docling-serve-auth"), "tok");
   });
 });

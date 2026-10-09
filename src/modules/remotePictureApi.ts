@@ -6,6 +6,7 @@
 // plan/2026-10-09-issue-17-remote-picture-api-design.md.
 
 import { getPref } from "../utils/prefs";
+import { secretWritesSettled } from "../utils/secrets";
 import { withRequestTimeout } from "../utils/timeout";
 import { buildAuthHeader } from "./credentials";
 import type { WebApis } from "./convert";
@@ -218,6 +219,8 @@ export async function resolveRemoteMode(
 ): Promise<RemoteMode> {
   const hit = capsCache.get(serverUrl);
   if (hit && Date.now() - hit.at < CAPS_TTL_MS) return hit.mode;
+  // The probe sends the docling-serve auth header: use the latest saved value.
+  await secretWritesSettled("docling-serve-auth");
   let mode: RemoteMode;
   try {
     mode = await withRequestTimeout(
