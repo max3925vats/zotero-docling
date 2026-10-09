@@ -330,6 +330,28 @@ export function buildConvertForm(
   return form;
 }
 
+/**
+ * True when Advanced JSON sets either remote picture-description field. An
+ * unparsable value counts as "not set": buildConvertForm reports that error.
+ */
+function advancedJsonSetsRemotePic(): boolean {
+  const raw = String(getPref("advancedJson") ?? "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      ("picture_description_api" in parsed ||
+        "picture_description_custom_config" in parsed)
+    );
+  } catch {
+    // Invalid JSON is reported by buildConvertForm; don't report it twice.
+    return false;
+  }
+}
+
 /** Status tags applied to the PARENT item after a batch of conversions. */
 const TAG_DONE = "docling/done";
 const TAG_INCOMPLETE = "docling/incomplete";
@@ -503,12 +525,16 @@ async function convertAttachmentInner(
   }
 
   let remote: RemotePicField | undefined;
-  if (remotePicEnabled()) {
-    const settings = readRemoteSettings();
+  const settings = remotePicEnabled() ? readRemoteSettings() : null;
+  if (settings) {
     // Each provider has its own key slot, so switching provider never sends
     // the previous provider's key.
     const key = getSecret(providerKeyName(settings.provider));
-    const invalid = validateRemoteSettings(settings, key);
+    // Advanced JSON that supplies the field itself overrides what we'd build,
+    // so incomplete UI settings mustn't block the conversion.
+    const invalid = advancedJsonSetsRemotePic()
+      ? null
+      : validateRemoteSettings(settings, key);
     if (invalid) return { status: "error", message: invalid };
     const mode = await resolveRemoteMode(serverUrl, api);
     log(`remote picture API mode=${mode} provider=${settings.provider}`);
@@ -528,7 +554,7 @@ async function convertAttachmentInner(
   // Hint context: only add remote-API causes when the feature actually ran.
   const hintCtx = {
     enabled: !!remote,
-    providerUrl: remote ? readRemoteSettings().url : "",
+    providerUrl: remote && settings ? settings.url : "",
   };
   if (!outcome.ok) {
     return {

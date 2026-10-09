@@ -158,7 +158,7 @@ async function fetchConvertResultSync(
   }
 }
 
-/** Plain sleep — no abort plumbing (see file header note on cancel). */
+/** Plain sleep — no abort plumbing (no server-side cancel; see README "Known limitations"). */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -177,7 +177,7 @@ async function fetchConvertResultAsync(
     Number(getPref("asyncPollIntervalSec") ?? 5) || 5,
   );
   // Absolute client-side wait ceiling. Does NOT cancel the server-side task
-  // (no upstream cancel API; see file header). Bounded [1, 1440] minutes; the
+  // (no upstream cancel API; see README "Known limitations"). Bounded [1, 1440] minutes; the
   // pref UI also clamps these.
   const maxWaitMs = asyncMaxWaitMs(getPref("asyncMaxWaitMin"));
 

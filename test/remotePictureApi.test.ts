@@ -368,6 +368,19 @@ describe("testRemoteApi", function () {
     assert.deepEqual(r, { ok: true, modelListed: false });
   });
 
+  it("rejects a 200 that isn't an OpenAI-style model list", async function () {
+    serve(() => new Response("<html>login</html>", { status: 200 }));
+    const html = await testRemoteApi(s, "sk", async () => true, getWebApis());
+    assert.isFalse(html.ok);
+    assert.match(
+      (html as { message: string }).message,
+      /not an OpenAI-style model list/,
+    );
+    serve(() => new Response(JSON.stringify({ models: [] }), { status: 200 }));
+    const noData = await testRemoteApi(s, "sk", async () => true, getWebApis());
+    assert.isFalse(noData.ok);
+  });
+
   it("explains a rejected key", async function () {
     serve(() => new Response("{}", { status: 401 }));
     const r = await testRemoteApi(s, "bad", async () => true, getWebApis());

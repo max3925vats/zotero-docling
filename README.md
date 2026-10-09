@@ -337,9 +337,10 @@ docling-serve run
 
 The plugin asks the server (`/v1/capabilities`) which request field it
 accepts. Servers that allow custom picture-description configs get the newer
-`picture_description_custom_config` field, which needs both variables. Older
-servers get `picture_description_api`, which needs only
-`DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true`.
+`picture_description_custom_config` field, which needs both variables. If
+the server doesn't report the newer field (an older docling-serve, or the
+second variable not set), the plugin uses `picture_description_api`, which
+needs only `DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true`.
 
 **Two machines.** docling-serve makes the call to the provider, from its own
 machine, not from Zotero. `localhost` in the API URL means the server's
@@ -350,8 +351,8 @@ Ollama) runs on the host, use
 **Test Remote API is free.** It lists the provider's models
 (`GET …/models`) from this computer, which doesn't use credits. OpenAI,
 Anthropic and OpenRouter ask for confirmation first. No PDF or image is sent.
-It checks that the URL and key work, not that docling-serve can reach the
-provider.
+It checks that the URL and key work, and whether your model name is in the
+provider's list — not that docling-serve can reach the provider.
 
 **If a conversion fails.** docling-serve 1.36 hides error details, so the
 plugin adds hints: is the server flag set, can the server reach the provider,

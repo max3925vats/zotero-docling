@@ -295,15 +295,21 @@ export async function testRemoteApi(
             message: `HTTP ${r.status} from ${url}`,
           };
         }
-        let ids: string[];
+        // A 200 that isn't an OpenAI-style model list (an HTML page, a proxy's
+        // login form, a different API) means the URL is wrong, not "connected".
+        let data: unknown;
         try {
-          const body = JSON.parse(await r.text());
-          ids = Array.isArray(body?.data)
-            ? body.data.map((m: { id?: unknown }) => String(m?.id ?? ""))
-            : [];
+          data = JSON.parse(await r.text())?.data;
         } catch {
-          ids = [];
+          data = undefined;
         }
+        if (!Array.isArray(data)) {
+          return {
+            ok: false as const,
+            message: `Unexpected response from ${url} — not an OpenAI-style model list`,
+          };
+        }
+        const ids = data.map((m: { id?: unknown }) => String(m?.id ?? ""));
         return { ok: true as const, modelListed: ids.includes(s.model.trim()) };
       },
       api.AbortController,

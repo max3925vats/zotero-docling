@@ -29,6 +29,7 @@ const TOUCHED = [
   "remotePicApiProvider",
   "remotePicApiUrl",
   "remotePicApiModel",
+  "advancedJson",
 ];
 const set = (k: string, v: unknown) =>
   Zotero.Prefs.set(`${P}.${k}`, v as never, true);
@@ -125,7 +126,8 @@ describe("remote picture API in conversions", function () {
   it("sends the custom-config field when the server allows it", async function () {
     const seen: { form?: FormData } = {};
     setFetchOverrideForTests(server(true, seen));
-    await convertOne();
+    const r = await convertOne();
+    assert.strictEqual(r.status, "ok");
     assert.ok(seen.form!.get("picture_description_custom_config"));
     assert.isNull(seen.form!.get("picture_description_api"));
   });
@@ -150,5 +152,16 @@ describe("remote picture API in conversions", function () {
     assert.strictEqual(r.status, "ok");
     const v = JSON.parse(String(seen.form!.get("picture_description_api")));
     assert.deepEqual(v.headers, {});
+  });
+
+  it("skips UI validation when Advanced JSON supplies the field", async function () {
+    set("remotePicApiModel", "");
+    const own = JSON.stringify({ url: "http://vlm.test/v1/chat/completions" });
+    set("advancedJson", JSON.stringify({ picture_description_api: own }));
+    const seen: { form?: FormData } = {};
+    setFetchOverrideForTests(server(false, seen));
+    const r = await convertOne();
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(seen.form!.get("picture_description_api"), own);
   });
 });
