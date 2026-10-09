@@ -1,6 +1,9 @@
 import { initLocale, getString } from "./utils/locale";
 import { registerMenus, unregisterMenus } from "./modules/menu";
-import { migrateUrlCredentials } from "./modules/convert";
+import {
+  migrateAuthSecretPref,
+  migrateUrlCredentials,
+} from "./modules/credentials";
 import { registerNotifier, unregisterNotifier } from "./modules/notifier";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { onZoteroBlur, onZoteroFocus, toast } from "./modules/ui";
@@ -9,7 +12,9 @@ import {
   detachFocusListeners,
 } from "./modules/windowListeners";
 import { createZToolkit } from "./utils/ztoolkit";
+import { notify } from "./utils/notification";
 import { getPref, setPref } from "./utils/prefs";
+import { loadSecrets } from "./utils/secrets";
 
 async function onStartup(): Promise<void> {
   await Promise.all([
@@ -19,7 +24,15 @@ async function onStartup(): Promise<void> {
   ]);
 
   initLocale();
-  safely("server URL credential migration", migrateUrlCredentials);
+  // Secrets live in the login manager (0.6.0+). Load them, then run the
+  // one-time migrations, before anything can send a request.
+  // Each step is isolated so one failure doesn't skip the others. The pref
+  // migration runs first: URL credentials (the ones in use) then win.
+  await safelyAsync("secrets load", loadSecretsOrWarn);
+  await safelyAsync("auth secret migration", async () => {
+    await migrateAuthSecretPref();
+  });
+  await safelyAsync("server URL credential migration", migrateUrlCredentials);
   registerPrefsPane();
   // Once for all windows: Zotero's MenuManager renders them per window.
   safely("menu registration", registerMenus);
@@ -31,6 +44,23 @@ async function onStartup(): Promise<void> {
 
   addon.data.initialized = true;
   maybeShowFirstRunNudge();
+}
+
+/**
+ * Load secrets; if the login manager can't be read, tell the user once.
+ * Conversions still run (without the saved credentials), so this stays
+ * non-fatal — the rethrow only lets safelyAsync() log it.
+ */
+async function loadSecretsOrWarn(): Promise<void> {
+  try {
+    await loadSecrets();
+  } catch (e) {
+    notify(
+      "zotero-docling",
+      "zotero-docling couldn't read saved credentials from Zotero's login manager. Conversions will run without them; re-enter them in Settings → zotero-docling.",
+    );
+    throw e;
+  }
 }
 
 /**
@@ -69,6 +99,20 @@ function maybeShowFirstRunNudge(): void {
 function safely(label: string, step: () => void): void {
   try {
     step();
+  } catch (e) {
+    Zotero.debug(
+      `[zotero-docling] ${label} failed (non-fatal): ${(e as Error).message}`,
+    );
+  }
+}
+
+/** Async twin of safely(). */
+async function safelyAsync(
+  label: string,
+  step: () => Promise<void>,
+): Promise<void> {
+  try {
+    await step();
   } catch (e) {
     Zotero.debug(
       `[zotero-docling] ${label} failed (non-fatal): ${(e as Error).message}`,

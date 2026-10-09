@@ -85,7 +85,6 @@
       <html:input
         type="password"
         id="zotero-docling-auth-secret"
-        preference="authSecret"
         style="flex: 1"
       ></html:input>
     </hbox>
@@ -431,6 +430,110 @@
         id="zotero-docling-pic-preset-detail"
         style="font-style: italic; opacity: 0.75"
       ></description>
+      <!-- Remote vision API (#17) -->
+      <checkbox
+        id="zotero-docling-remote-pic-enabled"
+        preference="remotePicApiEnabled"
+        data-l10n-id="pref-remote-pic-enabled"
+      />
+      <vbox id="zotero-docling-remote-pic-section" hidden="true">
+        <hbox align="center">
+          <html:label
+            data-l10n-id="pref-remote-pic-provider"
+            style="min-width: 130px"
+          ></html:label>
+          <menulist
+            id="zotero-docling-remote-pic-provider"
+            preference="remotePicApiProvider"
+          >
+            <menupopup>
+              <menuitem value="openai" label="OpenAI" />
+              <menuitem value="anthropic" label="Anthropic" />
+              <menuitem value="openrouter" label="OpenRouter" />
+              <menuitem value="ollama" label="Ollama" />
+              <menuitem value="lmstudio" label="LM Studio" />
+              <menuitem value="vllm" label="vLLM" />
+              <menuitem value="custom" data-l10n-id="pref-preset-custom" />
+            </menupopup>
+          </menulist>
+        </hbox>
+        <hbox align="center">
+          <html:label
+            for="zotero-docling-remote-pic-url"
+            data-l10n-id="pref-remote-pic-url"
+            style="min-width: 130px"
+          ></html:label>
+          <html:input
+            type="text"
+            id="zotero-docling-remote-pic-url"
+            preference="remotePicApiUrl"
+            style="flex: 1"
+          ></html:input>
+        </hbox>
+        <hbox align="center">
+          <html:label
+            for="zotero-docling-remote-pic-model"
+            data-l10n-id="pref-remote-pic-model"
+            style="min-width: 130px"
+          ></html:label>
+          <html:input
+            type="text"
+            id="zotero-docling-remote-pic-model"
+            preference="remotePicApiModel"
+            placeholder="e.g. qwen2.5vl:3b"
+            style="flex: 1"
+          ></html:input>
+        </hbox>
+        <hbox align="center">
+          <html:label
+            for="zotero-docling-remote-pic-key"
+            data-l10n-id="pref-remote-pic-key"
+            style="min-width: 130px"
+          ></html:label>
+          <html:input
+            type="password"
+            id="zotero-docling-remote-pic-key"
+            style="flex: 1"
+          ></html:input>
+        </hbox>
+        <hbox align="start">
+          <html:label
+            for="zotero-docling-remote-pic-prompt"
+            data-l10n-id="pref-remote-pic-prompt"
+            style="min-width: 130px"
+          ></html:label>
+          <html:textarea
+            id="zotero-docling-remote-pic-prompt"
+            preference="remotePicApiPrompt"
+            rows="3"
+            placeholder="Describe this image in a few sentences."
+            style="flex: 1"
+          ></html:textarea>
+        </hbox>
+        <hbox align="center">
+          <html:label
+            for="zotero-docling-remote-pic-timeout"
+            data-l10n-id="pref-remote-pic-timeout"
+            style="min-width: 130px"
+          ></html:label>
+          <html:input
+            type="number"
+            min="1"
+            max="3600"
+            id="zotero-docling-remote-pic-timeout"
+            preference="remotePicApiTimeoutSec"
+            style="width: 6em"
+          ></html:input>
+        </hbox>
+        <hbox align="center">
+          <button
+            id="zotero-docling-remote-pic-test"
+            data-l10n-id="pref-remote-pic-test"
+          />
+          <html:span id="zotero-docling-remote-pic-test-result"></html:span>
+        </hbox>
+        <description data-l10n-id="pref-remote-pic-help"></description>
+      </vbox>
     </groupbox>
   </vbox>
   <!-- end of conversion-section -->

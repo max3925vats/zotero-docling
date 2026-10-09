@@ -20,9 +20,27 @@ import {
   stripExistingFrontmatter,
 } from "../utils/frontmatter";
 import { withDbLock } from "../utils/dbLock";
-import { enrichServerError } from "../utils/serverErrorHints";
-import { toast } from "./ui";
+import {
+  enrichRemotePicError,
+  enrichServerError,
+} from "../utils/serverErrorHints";
+import { buildAuthHeader } from "./credentials";
+import { fetchConvertResult, timeoutMs } from "./transport";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
+import {
+  getSecret,
+  providerKeyName,
+  secretsReady,
+  secretWritesSettled,
+} from "../utils/secrets";
+import {
+  buildRemotePicField,
+  readRemoteSettings,
+  remotePicEnabled,
+  resolveRemoteMode,
+  validateRemoteSettings,
+  type RemotePicField,
+} from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
 
@@ -45,64 +63,15 @@ function log(...args: unknown[]): void {
 }
 
 /**
- * Build the auth header(s) to send with every request based on the configured
- * `authScheme` pref. Returns an empty object when scheme is "none" (the default).
- *
- * Wire format:
- *   - bearer:  Authorization: Bearer <token>
- *   - basic:   Authorization: Basic <base64(username:password)>
- *   - custom:  <header-name>: <header-value>  (single header, v1)
- *
- * The `Zotero.Prefs` store is plain text inside the user's profile — surface
- * this in the prefs help and SECURITY.md rather than pretending it's secure.
+ * Make sure the secrets cache is loaded and holds the latest edits. A broken
+ * login manager must not stop conversions: log it and carry on without the
+ * stored secrets (the legacy authSecret pref still works as a fallback).
  */
-/** UTF-8 bytes of a string (lone surrogates become U+FFFD, never a throw). */
-function utf8Bytes(s: string): Uint8Array | number[] {
-  const Encoder = (globalThis as any).TextEncoder;
-  if (Encoder) return new Encoder().encode(s);
-  // Sandbox without TextEncoder: same result via encodeURIComponent.
-  const safe = s.replace(
-    /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
-    "\ufffd",
+async function settleSecrets(): Promise<void> {
+  await secretsReady().catch((e: unknown) =>
+    log(`couldn't read saved credentials: ${(e as Error).message}`),
   );
-  return Array.from(
-    encodeURIComponent(safe).replace(/%([0-9A-F]{2})/g, (_, h) =>
-      String.fromCharCode(parseInt(h, 16)),
-    ),
-  ).map((c) => c.charCodeAt(0));
-}
-
-export function buildAuthHeader(): Record<string, string> {
-  const scheme = ((getPref("authScheme") ?? "none") as string).toLowerCase();
-  if (scheme === "none" || scheme === "") return {};
-
-  if (scheme === "bearer") {
-    const token = ((getPref("authSecret") as string) ?? "").trim();
-    if (!token) return {};
-    return { Authorization: `Bearer ${token}` };
-  }
-
-  if (scheme === "basic") {
-    const user = ((getPref("authUsername") as string) ?? "").trim();
-    const pass = (getPref("authSecret") as string) ?? "";
-    if (!user && !pass) return {};
-    // Basic auth is base64 of the UTF-8 bytes. btoa() only takes Latin-1, so
-    // non-ASCII credentials (é, €, ...) were mis-encoded or threw outright.
-    const bytes = utf8Bytes(`${user}:${pass}`);
-    let latin1 = "";
-    for (const b of bytes) latin1 += String.fromCharCode(b);
-    const encoded = (globalThis as any).btoa(latin1);
-    return { Authorization: `Basic ${encoded}` };
-  }
-
-  if (scheme === "custom") {
-    const name = ((getPref("authHeaderName") as string) ?? "").trim();
-    const value = ((getPref("authSecret") as string) ?? "").trim();
-    if (!name || !value) return {};
-    return { [name]: value };
-  }
-
-  return {};
+  await secretWritesSettled();
 }
 
 // Test seam: in-Zotero tests swap `fetch` for a scripted stand-in for
@@ -158,6 +127,8 @@ export function getWebApis(): {
   };
 }
 
+export type WebApis = ReturnType<typeof getWebApis>;
+
 export type ConvertResult =
   | {
       status: "ok";
@@ -187,7 +158,7 @@ export type ConvertResult =
 const inFlightItems = new Set<number>();
 
 /** docling-serve response envelope (subset we read). */
-interface ConvertResponse {
+export interface ConvertResponse {
   /** FastAPI request errors (e.g. 422): a message or a list of {msg};
    *  proxies and custom handlers sometimes send an object. */
   detail?: unknown;
@@ -211,6 +182,22 @@ interface ConvertResponse {
 }
 
 /**
+ * The preset name to send for a preset menu. "Custom…" ("__custom__") means
+ * "use the typed name"; with nothing typed we send no preset at all (the
+ * server's default) rather than the placeholder (audit M10). Any other value
+ * — a known preset, or a custom name saved by an older version — is sent
+ * as-is.
+ */
+function resolvePreset(
+  menuKey: "vlmPreset" | "pictureDescriptionPreset",
+  customKey: "vlmPresetCustom" | "pictureDescriptionPresetCustom",
+): string {
+  const value = ((getPref(menuKey) as string) ?? "default").trim();
+  if (value !== "__custom__") return value;
+  return ((getPref(customKey) as string) ?? "").trim();
+}
+
+/**
  * Build the multipart body for POST /v1/convert/file by reading all relevant
  * prefs and turning them into flat form fields. The `advancedJson` pref is
  * merged last, so it overrides anything else.
@@ -222,6 +209,7 @@ export function buildConvertForm(
   pdfBytes: Uint8Array,
   filename: string,
   api: { FormData: typeof FormData; Blob: typeof Blob },
+  remote?: RemotePicField,
 ): FormData {
   const form = new api.FormData();
   form.append(
@@ -273,9 +261,14 @@ export function buildConvertForm(
   const vlmPreset = resolvePreset("vlmPreset", "vlmPresetCustom");
   if (vlmPreset) form.append("vlm_pipeline_preset", vlmPreset);
 
-  const doPicDesc = (getPref("doPictureDescription") ?? false) as boolean;
+  // A remote vision API (#17) replaces the local preset: docling-serve calls
+  // the provider itself, so description must be on and no preset is sent.
+  const doPicDesc =
+    !!remote || ((getPref("doPictureDescription") ?? false) as boolean);
   form.append("do_picture_description", String(doPicDesc));
-  if (doPicDesc) {
+  if (remote) {
+    form.append(remote.name, remote.value);
+  } else if (doPicDesc) {
     const picPreset = resolvePreset(
       "pictureDescriptionPreset",
       "pictureDescriptionPresetCustom",
@@ -311,6 +304,15 @@ export function buildConvertForm(
     ) {
       throw new Error("advancedJson must be a JSON object");
     }
+    // The two remote fields are mutually exclusive on the server; if Advanced
+    // JSON sets either, drop whatever the UI built for both.
+    if (
+      "picture_description_api" in parsed ||
+      "picture_description_custom_config" in parsed
+    ) {
+      form.delete("picture_description_api");
+      form.delete("picture_description_custom_config");
+    }
     for (const [key, value] of Object.entries(parsed)) {
       if (value === null || value === undefined) continue;
       // Remove any earlier value we set for this key so advanced wins.
@@ -326,6 +328,28 @@ export function buildConvertForm(
   }
 
   return form;
+}
+
+/**
+ * True when Advanced JSON sets either remote picture-description field. An
+ * unparsable value counts as "not set": buildConvertForm reports that error.
+ */
+function advancedJsonSetsRemotePic(): boolean {
+  const raw = String(getPref("advancedJson") ?? "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      ("picture_description_api" in parsed ||
+        "picture_description_custom_config" in parsed)
+    );
+  } catch {
+    // Invalid JSON is reported by buildConvertForm; don't report it twice.
+    return false;
+  }
 }
 
 /** Status tags applied to the PARENT item after a batch of conversions. */
@@ -387,7 +411,7 @@ export async function applyStatusTagsToParents(
 }
 
 /** Concise "errors[]" rendering for surfacing in toasts and logs. */
-function formatServerErrors(data: ConvertResponse): string {
+export function formatServerErrors(data: ConvertResponse): string {
   const parts = (data.errors ?? [])
     .map((e) => e?.error_message ?? JSON.stringify(e))
     .filter(Boolean);
@@ -405,367 +429,6 @@ function formatServerErrors(data: ConvertResponse): string {
     } else parts.push(JSON.stringify(d));
   }
   return parts.join(" | ") || `status="${data.status ?? "unknown"}"`;
-}
-
-// ---------------------------------------------------------------------------
-//  Talk to docling-serve — sync or async transport
-// ---------------------------------------------------------------------------
-
-type FetchOutcome =
-  { ok: true; data: ConvertResponse } | { ok: false; message: string };
-
-interface TaskStatusResponse {
-  task_id?: string;
-  task_status?:
-    | "pending"
-    | "started"
-    | "success"
-    | "partial_success"
-    | "failure"
-    | "skipped";
-  task_position?: number | null;
-  error_message?: string | null;
-}
-
-/** Build the response label "HTTP 504 Gateway Timeout" for a Response. */
-function httpLabelOf(r: Response): string {
-  return r.statusText ? `HTTP ${r.status} ${r.statusText}` : `HTTP ${r.status}`;
-}
-
-/**
- * The preset name to send for a preset menu. "Custom…" ("__custom__") means
- * "use the typed name"; with nothing typed we send no preset at all (the
- * server's default) rather than the placeholder (audit M10). Any other value
- * — a known preset, or a custom name saved by an older version — is sent
- * as-is.
- */
-function resolvePreset(
-  menuKey: "vlmPreset" | "pictureDescriptionPreset",
-  customKey: "vlmPresetCustom" | "pictureDescriptionPresetCustom",
-): string {
-  const value = ((getPref(menuKey) as string) ?? "default").trim();
-  if (value !== "__custom__") return value;
-  return ((getPref(customKey) as string) ?? "").trim();
-}
-
-/**
- * Async max wait in ms. 0 means no limit: docling-serve can't cancel a task,
- * so giving up client-side only orphans it, and some users would rather the
- * plugin wait as long as the server works (README, commit 4ba5ace). Unset
- * or invalid values get the 240-minute default; the maximum is 1440.
- */
-export function asyncMaxWaitMs(raw: unknown): number {
-  const n = Number(raw);
-  if (raw === undefined || raw === null || raw === "") return 240 * 60_000;
-  if (!Number.isFinite(n) || n < 0) return 240 * 60_000;
-  if (n === 0) return Infinity;
-  return Math.min(1440, Math.max(1, n)) * 60_000;
-}
-
-/**
- * Read a timeout pref as milliseconds. Non-numeric or non-positive values
- * fall back to the shipped default rather than disabling the timeout.
- */
-function timeoutMs(
-  key:
-    | "healthTimeoutSec"
-    | "pollTimeoutSec"
-    | "asyncUploadTimeoutMin"
-    | "asyncResultTimeoutMin"
-    | "syncTimeoutMin",
-  fallback: number,
-): number {
-  const n = Number(getPref(key));
-  const value = Number.isFinite(n) && n > 0 ? n : fallback;
-  // setTimeout treats anything above 2^31-1 ms (~24.8 days) as 0, which
-  // would make every request "time out" at once.
-  return Math.min(value * (key.endsWith("Sec") ? 1000 : 60_000), 2_147_483_647);
-}
-
-/** User-facing message for a failed request: timeout vs. unreachable. */
-function requestFailureMessage(
-  e: unknown,
-  what: string,
-  settingLabel: string,
-): string {
-  if (e instanceof RequestTimeoutError) {
-    // A timeout stops the waiting, not the work: docling-serve has no cancel
-    // API, so say so rather than imply the conversion was stopped.
-    return `${e.message} ${what} — docling-serve may still be processing this PDF (Settings → Advanced → Timeouts → ${settingLabel})`;
-  }
-  return "Server not reachable";
-}
-
-/** Parse a response as JSON. On non-2xx with no JSON body, return the HTTP label. */
-async function parseConvertResponse(r: Response): Promise<FetchOutcome> {
-  const label = httpLabelOf(r);
-  let data: ConvertResponse = {};
-  let raw = "";
-  try {
-    raw = await r.text();
-    if (raw) data = JSON.parse(raw) as ConvertResponse;
-  } catch {
-    if (!r.ok) return { ok: false, message: label };
-    return {
-      ok: false,
-      message: `Non-JSON response (${label}): ${raw.slice(0, 200)}`,
-    };
-  }
-  if (!r.ok) {
-    const errs = formatServerErrors(data);
-    const hasDetail = errs && !errs.startsWith("status=");
-    const raw = hasDetail ? `${label}: ${errs}` : label;
-    return { ok: false, message: enrichServerError(raw) };
-  }
-  return { ok: true, data };
-}
-
-/** Sync transport: POST + immediate response. */
-async function fetchConvertResultSync(
-  serverUrl: string,
-  form: FormData,
-  api: ReturnType<typeof getWebApis>,
-): Promise<FetchOutcome> {
-  try {
-    return await withRequestTimeout(
-      timeoutMs("syncTimeoutMin", 10),
-      async (signal) => {
-        const response = await api.fetch(`${serverUrl}/v1/convert/file`, {
-          method: "POST",
-          body: form,
-          headers: buildAuthHeader(),
-          signal,
-        });
-        return parseConvertResponse(response);
-      },
-      api.AbortController,
-    );
-  } catch (e) {
-    Zotero.debug(`${LOG} sync fetch failed: ${(e as Error).message}`);
-    return {
-      ok: false,
-      message: requestFailureMessage(
-        e,
-        "waiting for the conversion",
-        "Sync conversion",
-      ),
-    };
-  }
-}
-
-/** Plain sleep — no abort plumbing (see file header note on cancel). */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Async transport: submit job → poll status → fetch result.
- * Avoids upstream proxy/gateway timeouts on long VLM conversions.
- */
-async function fetchConvertResultAsync(
-  serverUrl: string,
-  form: FormData,
-  api: ReturnType<typeof getWebApis>,
-): Promise<FetchOutcome> {
-  const pollSec = Math.max(
-    1,
-    Number(getPref("asyncPollIntervalSec") ?? 5) || 5,
-  );
-  // Absolute client-side wait ceiling. Does NOT cancel the server-side task
-  // (no upstream cancel API; see file header). Bounded [1, 1440] minutes; the
-  // pref UI also clamps these.
-  const maxWaitMs = asyncMaxWaitMs(getPref("asyncMaxWaitMin"));
-
-  // 1. Submit
-  const authHeaders = buildAuthHeader();
-  let submitBody: TaskStatusResponse;
-  try {
-    const submitted = await withRequestTimeout(
-      timeoutMs("asyncUploadTimeoutMin", 5),
-      async (signal) => {
-        const r = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
-          method: "POST",
-          body: form,
-          headers: authHeaders,
-          signal,
-        });
-        if (!r.ok) {
-          // Include the server's reason (e.g. a 422 for an option set in
-          // Advanced JSON), not just the status line.
-          const outcome = await parseConvertResponse(r);
-          return { label: outcome.ok ? httpLabelOf(r) : outcome.message };
-        }
-        return {
-          body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
-        };
-      },
-      api.AbortController,
-    );
-    if ("label" in submitted) {
-      return { ok: false, message: `Submit ${submitted.label}` };
-    }
-    submitBody = submitted.body;
-  } catch (e) {
-    Zotero.debug(`${LOG} async submit failed: ${(e as Error).message}`);
-    return {
-      ok: false,
-      message: requestFailureMessage(e, "uploading the PDF", "Async upload"),
-    };
-  }
-  const taskId = submitBody.task_id;
-  if (!taskId) {
-    return { ok: false, message: "Async submit returned no task_id" };
-  }
-  log(`async task submitted id=${taskId}`);
-
-  // 2. Poll until terminal or the client-side wait ceiling expires.
-  //
-  // Two safety nets, neither of which is a server-side cancel (still blocked
-  // upstream on docling-serve#447/#401, see README "Known limitations"):
-  //
-  //   (a) `asyncMaxWaitMin` is an absolute ceiling on how long we'll keep
-  //       polling for one task. When exceeded we return — the server-side
-  //       task may still be running, but we stop spinning client-side.
-  //   (b) `consecutiveFailures` escalates: a Zotero.debug warning at 3
-  //       failures, and a single toast at 10. Gives users a fast feedback
-  //       loop when docling-serve dies mid-task, instead of appearing hung.
-  const startedAt = Date.now();
-  let consecutiveFailures = 0;
-  let unresponsiveToastShown = false;
-  while (true) {
-    await sleep(pollSec * 1000);
-
-    if (Date.now() - startedAt > maxWaitMs) {
-      return {
-        ok: false,
-        message: `Async task exceeded maxWait (${maxWaitMs / 60_000} min) — server-side task may still be running`,
-      };
-    }
-
-    let poll:
-      { ok: false; label: string } | { ok: true; status: TaskStatusResponse };
-    try {
-      poll = await withRequestTimeout(
-        timeoutMs("pollTimeoutSec", 30),
-        async (signal) => {
-          const r = await api.fetch(`${serverUrl}/v1/status/poll/${taskId}`, {
-            headers: authHeaders,
-            signal,
-          });
-          if (!r.ok) {
-            // 5xx/429 from a proxy or a busy server are usually transient:
-            // throw so the catch below counts a failed poll and keeps going
-            // (bounded by the max-wait ceiling). Other errors (404 = task
-            // unknown) are final.
-            if (r.status >= 500 || r.status === 429) {
-              throw new Error(`Poll ${httpLabelOf(r)}`);
-            }
-            return { ok: false as const, label: httpLabelOf(r) };
-          }
-          const raw = await r.text();
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(raw);
-          } catch {
-            parsed = undefined;
-          }
-          // e.g. a proxy's HTML login page, or `null` — used to poll silently
-          // for hours (or crash); now a failed poll.
-          if (!parsed || typeof parsed !== "object") {
-            throw new Error("Poll returned an unexpected (non-JSON) response");
-          }
-          return { ok: true as const, status: parsed as TaskStatusResponse };
-        },
-        api.AbortController,
-      );
-      consecutiveFailures = 0;
-    } catch (e) {
-      // A poll that times out counts as one failed poll, like a network blip.
-      consecutiveFailures++;
-      Zotero.debug(
-        `${LOG} async poll failed (${consecutiveFailures} consecutive): ${(e as Error).message}`,
-      );
-      if (consecutiveFailures === 3) {
-        Zotero.debug(
-          `${LOG} async poll failing repeatedly — task=${taskId} (will surface a toast at 10)`,
-        );
-      }
-      if (consecutiveFailures >= 10 && !unresponsiveToastShown) {
-        unresponsiveToastShown = true;
-        try {
-          toast(
-            "Docling",
-            "docling-serve appears unresponsive — async task may have failed",
-            false,
-          );
-        } catch {
-          /* toast helpers may fail during shutdown — best-effort */
-        }
-      }
-      // Keep polling until the maxWait ceiling above; transient blips often
-      // recover within a few seconds.
-      continue;
-    }
-    if (!poll.ok) {
-      return { ok: false, message: `Poll ${poll.label}` };
-    }
-    const status = poll.status;
-    const s = status.task_status;
-    if (s === "success" || s === "partial_success") break;
-    if (s === "failure") {
-      return {
-        ok: false,
-        message: status.error_message
-          ? `Async task failed: ${status.error_message}`
-          : "Async task failed",
-      };
-    }
-    if (s === "skipped") {
-      return { ok: false, message: "Async task skipped by server" };
-    }
-    // pending / started / undefined → keep polling
-  }
-
-  // 3. Fetch result
-  try {
-    return await withRequestTimeout(
-      timeoutMs("asyncResultTimeoutMin", 10),
-      async (signal) => {
-        const r = await api.fetch(`${serverUrl}/v1/result/${taskId}`, {
-          headers: authHeaders,
-          signal,
-        });
-        return parseConvertResponse(r);
-      },
-      api.AbortController,
-    );
-  } catch (e) {
-    Zotero.debug(`${LOG} async result fetch failed: ${(e as Error).message}`);
-    return {
-      ok: false,
-      message:
-        e instanceof RequestTimeoutError
-          ? requestFailureMessage(
-              e,
-              "downloading the result",
-              "Async result download",
-            )
-          : "Server not reachable while fetching result",
-    };
-  }
-}
-
-/** Dispatch to sync or async transport based on the useAsyncEndpoint pref. */
-async function fetchConvertResult(
-  serverUrl: string,
-  form: FormData,
-  api: ReturnType<typeof getWebApis>,
-): Promise<FetchOutcome> {
-  const useAsync = (getPref("useAsyncEndpoint") ?? false) as boolean;
-  log(`transport=${useAsync ? "async" : "sync"}`);
-  return useAsync
-    ? fetchConvertResultAsync(serverUrl, form, api)
-    : fetchConvertResultSync(serverUrl, form, api);
 }
 
 /**
@@ -795,6 +458,8 @@ async function convertAttachmentInner(
   item: Zotero.Item,
   options?: { force?: boolean },
 ): Promise<ConvertResult> {
+  // The auth secret lives in the login manager; make sure it is loaded.
+  await settleSecrets();
   const force = options?.force ?? false;
 
   // --- 1. Guard checks ---
@@ -852,16 +517,33 @@ async function convertAttachmentInner(
   }
   const serverUrl = normalizedUrl.url;
 
-  let api: ReturnType<typeof getWebApis>;
+  let api: WebApis;
   try {
     api = getWebApis();
   } catch (e) {
     return { status: "error", message: (e as Error).message };
   }
 
+  let remote: RemotePicField | undefined;
+  const settings = remotePicEnabled() ? readRemoteSettings() : null;
+  if (settings) {
+    // Each provider has its own key slot, so switching provider never sends
+    // the previous provider's key.
+    const key = getSecret(providerKeyName(settings.provider));
+    // Advanced JSON that supplies the field itself overrides what we'd build,
+    // so incomplete UI settings mustn't block the conversion.
+    const invalid = advancedJsonSetsRemotePic()
+      ? null
+      : validateRemoteSettings(settings, key);
+    if (invalid) return { status: "error", message: invalid };
+    const mode = await resolveRemoteMode(serverUrl, api);
+    log(`remote picture API mode=${mode} provider=${settings.provider}`);
+    remote = buildRemotePicField(mode, settings, key);
+  }
+
   let form: FormData;
   try {
-    form = buildConvertForm(pdfBytes, filename, api);
+    form = buildConvertForm(pdfBytes, filename, api, remote);
   } catch (e) {
     return { status: "error", message: (e as Error).message };
   }
@@ -869,8 +551,16 @@ async function convertAttachmentInner(
   // --- 6. Talk to docling-serve via sync or async transport ---
   log(`send ${serverUrl} file=${filename}`);
   const outcome = await fetchConvertResult(serverUrl, form, api);
+  // Hint context: only add remote-API causes when the feature actually ran.
+  const hintCtx = {
+    enabled: !!remote,
+    providerUrl: remote && settings ? settings.url : "",
+  };
   if (!outcome.ok) {
-    return { status: "error", message: outcome.message };
+    return {
+      status: "error",
+      message: enrichRemotePicError(outcome.message, hintCtx),
+    };
   }
   const data = outcome.data;
 
@@ -880,7 +570,7 @@ async function convertAttachmentInner(
     const raw = `Conversion ${data.status ?? "unknown"}: ${formatServerErrors(data)}`;
     return {
       status: "error",
-      message: enrichServerError(raw),
+      message: enrichRemotePicError(enrichServerError(raw), hintCtx),
     };
   }
   const rawMarkdown = data.document?.md_content;
@@ -1069,37 +759,6 @@ export async function preflightServer(): Promise<boolean> {
  * http://host:9292/upstream/docling-serve (issue #44). A query string or
  * fragment is rejected because appending a path after it would break.
  */
-/**
- * One-time cleanup for servers configured as http://user:pass@host. URL
- * credentials are now rejected (they were silently dropped before), so move
- * them into the Basic auth settings — unless another auth scheme is already
- * set up, in which case keep that and just strip the URL. Without this,
- * auto-convert for such users would only report "docling-serve isn't
- * running".
- */
-export function migrateUrlCredentials(): void {
-  const raw = ((getPref("serverUrl") as string) ?? "").trim();
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return;
-  }
-  if (!parsed.username && !parsed.password) return;
-  const user = decodeURIComponent(parsed.username);
-  const pass = decodeURIComponent(parsed.password);
-  parsed.username = "";
-  parsed.password = "";
-  const scheme = ((getPref("authScheme") as string) ?? "none").toLowerCase();
-  if (scheme === "none" || scheme === "") {
-    setPref("authScheme", "basic");
-    setPref("authUsername", user);
-    setPref("authSecret", pass);
-  }
-  setPref("serverUrl", parsed.toString().replace(/\/+$/, ""));
-  log("moved credentials out of the server URL");
-}
-
 export function normalizeServerUrl(
   raw: string,
 ): { ok: true; url: string } | { ok: false; message: string } {
@@ -1150,10 +809,11 @@ export function normalizeServerUrl(
 export async function testServerConnection(
   serverUrl: string,
 ): Promise<{ ok: true; serverUrl: string } | { ok: false; message: string }> {
+  await settleSecrets();
   const normalized = normalizeServerUrl(serverUrl);
   if (!normalized.ok) return normalized;
   const url = normalized.url;
-  let api: ReturnType<typeof getWebApis>;
+  let api: WebApis;
   try {
     api = getWebApis();
   } catch (e) {

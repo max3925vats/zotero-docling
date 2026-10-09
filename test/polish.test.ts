@@ -1,11 +1,12 @@
 import { assert } from "chai";
 import { config } from "../package.json";
 import {
-  buildAuthHeader,
   convertAttachment,
   normalizeServerUrl,
   setFetchOverrideForTests,
 } from "../src/modules/convert";
+import { buildAuthHeader } from "../src/modules/credentials";
+import { clearAllSecrets, setSecret } from "../src/utils/secrets";
 import { zipBaseName, zipUniqueName } from "../src/modules/markdownZipExport";
 import {
   buildFrontmatter,
@@ -93,14 +94,15 @@ describe("polish", function () {
   });
 
   describe("credentials", function () {
-    afterEach(function () {
+    afterEach(async function () {
       clearPrefs(["authScheme", "authUsername", "authSecret"]);
+      await clearAllSecrets();
     });
 
-    it("encodes Basic auth credentials as UTF-8", function () {
+    it("encodes Basic auth credentials as UTF-8", async function () {
       setPref("authScheme", "basic");
       setPref("authUsername", "jürgen");
-      setPref("authSecret", "pass€");
+      await setSecret("docling-serve-auth", "pass€");
       const bytes = new TextEncoder().encode("jürgen:pass€");
       const expected = btoa(String.fromCharCode(...bytes));
       assert.deepEqual(buildAuthHeader(), {

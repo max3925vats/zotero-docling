@@ -38,6 +38,13 @@ export const KNOWN_SERVER_ISSUES: ReadonlyArray<KnownIssue> = [
     matches: (m) => /\bMPS\b/.test(m) && /\bfloat64\b/i.test(m),
     hint: "Apple Silicon MPS bug — restart docling-serve with PYTORCH_ENABLE_MPS_FALLBACK=1 (see README → Troubleshooting).",
   },
+  {
+    id: "task-result-not-found",
+    // docling-serve 1.36 answers a failed *sync* conversion with this 404 and
+    // hides the real error (DOCLING_SERVE_DEBUG_ERROR_DETAILS defaults off).
+    matches: (m) => /Task result not found/i.test(m),
+    hint: "The conversion failed on the server; docling-serve hides the details — check its log.",
+  },
 ];
 
 /**
@@ -66,5 +73,41 @@ export function enrichServerError(message: string): string {
     }
   }
   if (hints.length === 0) return message;
+  return `${message}\n· ${hints.join("\n· ")}`;
+}
+
+// docling-serve reports these for several unrelated causes, so the remote
+// hint lists the likely ones rather than guessing one.
+const OPAQUE_FAILURE =
+  /Task result not found|Internal processing error|Async task failed/i;
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    // Empty or malformed URL: no host to check, so no Docker note.
+    return "";
+  }
+}
+
+/**
+ * Extra hints when a remote picture API is configured: docling-serve gives the
+ * same opaque error for all of these, so list the likely causes rather than
+ * guess one. Pure (no prefs) so it can be unit-tested.
+ */
+export function enrichRemotePicError(
+  message: string,
+  ctx: { enabled: boolean; providerUrl: string },
+): string {
+  if (!ctx.enabled || !OPAQUE_FAILURE.test(message)) return message;
+  const hints = [
+    "Remote picture API is on. Likely causes: (1) docling-serve not started with DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true; (2) docling-serve can't reach the API URL from its own machine; (3) the model isn't a vision model or the name is wrong; (4) the remote-API settings are incomplete.",
+  ];
+  const host = hostOf(ctx.providerUrl);
+  if (["localhost", "127.0.0.1", "[::1]", "::1"].includes(host)) {
+    hints.push(
+      "If docling-serve runs in Docker, 'localhost' is the container itself — use http://host.docker.internal:<port>/… instead.",
+    );
+  }
   return `${message}\n· ${hints.join("\n· ")}`;
 }

@@ -6,8 +6,15 @@
 
 import { getLocaleID } from "../utils/locale";
 import { getPref, setPref } from "../utils/prefs";
+import { clearAllSecrets } from "../utils/secrets";
 import { FluentMessageId } from "../../typings/i10n";
 import { testServerConnection } from "./convert";
+import {
+  bindRemotePicSection,
+  bindRemotePicTest,
+  bindSecretField,
+} from "./remotePicPane";
+import { clearCapabilitiesCache } from "./remotePictureApi";
 
 const LOG = "[zotero-docling]";
 
@@ -16,7 +23,7 @@ const LOG = "[zotero-docling]";
  * Reset-to-defaults knows what to clear. Each Zotero.Prefs.clear() reverts
  * the corresponding pref to whatever prefs.js declared at install time.
  */
-const ALL_PREF_KEYS: ReadonlyArray<string> = [
+export const ALL_PREF_KEYS: ReadonlyArray<string> = [
   "serverUrl",
   "autoConvert",
   "skipIfExists",
@@ -43,6 +50,12 @@ const ALL_PREF_KEYS: ReadonlyArray<string> = [
   "asyncMaxWaitMin",
   "vlmPresetCustom",
   "pictureDescriptionPresetCustom",
+  "remotePicApiEnabled",
+  "remotePicApiProvider",
+  "remotePicApiUrl",
+  "remotePicApiModel",
+  "remotePicApiPrompt",
+  "remotePicApiTimeoutSec",
   "healthTimeoutSec",
   "pollTimeoutSec",
   "asyncUploadTimeoutMin",
@@ -127,6 +140,7 @@ export function registerPrefsScripts(win: Window): void {
   addon.data.prefs.window = win;
 
   bindTestConnection(win);
+  bindRemotePicTest(win);
   // Each binder returns the function that re-syncs its piece of the pane
   // from prefs; Reset re-runs them all after clearing (audit M12).
   const refreshers: Array<() => void> = [];
@@ -137,6 +151,10 @@ export function registerPrefsScripts(win: Window): void {
   keep(bindPresetCustomToggle(win, "vlm"));
   keep(bindPresetCustomToggle(win, "pic"));
   keep(bindAuthSchemeToggle(win));
+  keep(
+    bindSecretField(win, "zotero-docling-auth-secret", "docling-serve-auth"),
+  );
+  keep(bindRemotePicSection(win));
   keep(bindPresetDetail(win, "vlm", VLM_PRESET_DETAIL, "vlmPreset"));
   keep(
     bindPresetDetail(win, "pic", PIC_PRESET_DETAIL, "pictureDescriptionPreset"),
@@ -357,6 +375,8 @@ function bindTestConnection(win: Window): void {
       "http://localhost:5001";
     label.textContent = "Testing…";
     label.style.color = "";
+    // Re-probe /v1/capabilities: the user may have just restarted the server.
+    clearCapabilitiesCache();
     const result = await testServerConnection(serverUrl);
     const snapshot = {
       ok: result.ok,
@@ -500,6 +520,16 @@ async function resetPrefs(
     }
   }
   Zotero.debug(`${LOG} prefs: reset ${cleared} keys to defaults`);
+
+  // Secrets live in the login manager, not prefs, so the loop above can't
+  // reach them. A failed clear is logged, not fatal: the pane still refreshes.
+  try {
+    await clearAllSecrets();
+  } catch (e) {
+    Zotero.debug(
+      `${LOG} prefs: clearing secrets failed: ${(e as Error).message}`,
+    );
+  }
 
   // Bring the dynamic parts of the pane back in line with the defaults.
   for (const refresh of refreshers) {

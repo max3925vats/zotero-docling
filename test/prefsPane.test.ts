@@ -2,9 +2,22 @@ import { assert } from "chai";
 import { config } from "../package.json";
 import { buildConvertForm } from "../src/modules/convert";
 import {
+  ALL_PREF_KEYS,
   authSecretLabelId,
   migrateLegacyCustomPreset,
 } from "../src/modules/preferenceScript";
+import {
+  bindSecretField,
+  providerDefaults,
+} from "../src/modules/remotePicPane";
+import {
+  clearAllSecrets,
+  getSecret,
+  providerKeyName,
+  secretWritesSettled,
+  setSecret,
+  type SecretKey,
+} from "../src/utils/secrets";
 
 // Audit H4 / M10: the auth secret label was relabelled with a bare Fluent ID
 // (blank label), and each preset's menulist and its "custom" text box were
@@ -106,6 +119,122 @@ describe("prefs pane", function () {
         `${p}-pref-auth-header-value`,
       );
       assert.strictEqual(authSecretLabelId("none"), `${p}-pref-auth-secret`);
+    });
+  });
+
+  describe("bindSecretField", function () {
+    afterEach(async function () {
+      await clearAllSecrets();
+    });
+
+    function fakeWin(input: HTMLInputElement): Window {
+      return { document: { getElementById: () => input } } as unknown as Window;
+    }
+
+    it("fills the input from the store and saves edits back", async function () {
+      const doc = Zotero.getMainWindow().document;
+      const input = doc.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "input",
+      ) as HTMLInputElement;
+      await setSecret("docling-serve-auth", "stored");
+      const refresh = bindSecretField(
+        fakeWin(input),
+        "x",
+        "docling-serve-auth",
+      );
+      assert.strictEqual(input.value, "stored");
+      input.value = "edited";
+      input.dispatchEvent(new (Zotero.getMainWindow() as any).Event("change"));
+      await new Promise((r) => setTimeout(r, 50));
+      assert.strictEqual(getSecret("docling-serve-auth"), "edited");
+      await setSecret("docling-serve-auth", "");
+      refresh();
+      assert.strictEqual(input.value, "");
+    });
+
+    function newInput(): HTMLInputElement {
+      return Zotero.getMainWindow().document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "input",
+      ) as HTMLInputElement;
+    }
+    const fire = (input: HTMLInputElement, type: string) =>
+      input.dispatchEvent(new (Zotero.getMainWindow() as any).Event(type));
+
+    it("saves typed text after a short pause, without a change event", async function () {
+      const input = newInput();
+      bindSecretField(fakeWin(input), "x", "docling-serve-auth");
+      input.value = "typed";
+      fire(input, "input");
+      await new Promise((r) => setTimeout(r, 600));
+      await secretWritesSettled();
+      assert.strictEqual(getSecret("docling-serve-auth"), "typed");
+    });
+
+    it("a reader that settles right after typing sees the new value", async function () {
+      const input = newInput();
+      bindSecretField(fakeWin(input), "x", "docling-serve-auth");
+      input.value = "just-typed";
+      fire(input, "input");
+      // No wait for the debounce: settling flushes the pending edit.
+      await secretWritesSettled();
+      assert.strictEqual(getSecret("docling-serve-auth"), "just-typed");
+    });
+
+    it("follows the selected provider's slot", async function () {
+      const input = newInput();
+      let key: SecretKey = providerKeyName("openai");
+      const field = bindSecretField(fakeWin(input), "x", () => key);
+      input.value = "sk-openai";
+      fire(input, "input");
+      // What the provider menulist does: save the old slot, then switch.
+      field.flush();
+      key = providerKeyName("ollama");
+      field();
+      assert.strictEqual(input.value, "");
+      await secretWritesSettled();
+      assert.strictEqual(getSecret(providerKeyName("openai")), "sk-openai");
+      assert.strictEqual(getSecret(providerKeyName("ollama")), "");
+    });
+  });
+
+  describe("providerDefaults", function () {
+    it("returns the provider URL for presets and null for Custom", function () {
+      assert.deepEqual(providerDefaults("ollama"), {
+        url: "http://localhost:11434/v1/chat/completions",
+      });
+      assert.isNull(providerDefaults("custom"));
+    });
+  });
+
+  describe("remote prefs", function () {
+    const REMOTE = [
+      "remotePicApiEnabled",
+      "remotePicApiProvider",
+      "remotePicApiUrl",
+      "remotePicApiModel",
+      "remotePicApiPrompt",
+      "remotePicApiTimeoutSec",
+    ];
+
+    it("are all cleared by Reset", function () {
+      for (const k of REMOTE) assert.include(ALL_PREF_KEYS, k);
+    });
+
+    it("are all bound in the pane", async function () {
+      // Read the shipped XHTML as text; a missing preference="" binding would
+      // leave the field unsaved with no other symptom.
+      const url = `chrome://${config.addonRef}/content/preferences.xhtml`;
+      const src = await Zotero.File.getContentsFromURLAsync(url);
+      // The scaffold build prefixes pref names in the shipped XHTML.
+      for (const k of REMOTE) {
+        assert.include(
+          src,
+          `preference="${config.prefsPrefix}.${k}"`,
+          `${k} must be bound`,
+        );
+      }
     });
   });
 });

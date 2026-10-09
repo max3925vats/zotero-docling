@@ -71,7 +71,13 @@ You need both.
 - **Auto-convert on import** (opt-in): newly imported PDFs are converted
   automatically with a 3-second debounce that handles bulk imports gracefully.
 - **Optional authentication**: Bearer token / Basic auth / Custom header
-  schemes for protected `docling-serve` instances. Default is no auth.
+  schemes for protected `docling-serve` instances. Default is no auth. The
+  secret is stored in Zotero's login manager, not in plain-text prefs (see
+  [SECURITY.md](SECURITY.md)).
+- **Remote vision APIs for picture descriptions** (opt-in): describe figures
+  with OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, vLLM or any
+  OpenAI-compatible endpoint instead of a local model. See
+  [Remote vision APIs](#remote-vision-apis-for-picture-descriptions).
 - **Full Docling options surfaced**: pipeline (standard / VLM), OCR + language,
   table mode, formula / code / chart / picture enrichments, VLM presets, plus
   an Advanced JSON escape hatch for anything not in the UI.
@@ -100,7 +106,9 @@ You need both.
 
 - **Zotero** 8.0 – 10.0.x (tested on Zotero 10.0.3; CI runs the test suite on
   Zotero 8.0.4, 10.0.6 and the current beta). For Zotero 7, use the 0.4.x
-  releases.
+  releases. If you roll back from 0.6.0 to 0.5.x or 0.4.x, re-enter your
+  docling-serve credential: 0.6.0 moves it out of the plain-text prefs, so
+  older versions send requests without it (HTTP 401) until you do.
 - **[docling-serve](https://github.com/docling-project/docling-serve)** running
   locally or reachable over HTTP.
 - For VLM pipelines: enough RAM/disk for the model weights (Granite-Docling
@@ -287,6 +295,74 @@ megabytes. To slim down existing files without re-converting:
 The image data is gone for good after this — re-convert the PDF if you
 ever need the figures back. Code blocks inside the markdown are left
 untouched.
+
+---
+
+## Remote vision APIs for picture descriptions
+
+By default, picture descriptions use a model that runs inside docling-serve.
+This option sends each figure to a vision model behind an OpenAI-compatible
+API instead. It is off by default.
+
+In **Settings → zotero-docling → Conversion options**, tick **Describe
+pictures with a remote vision API instead of a local model**, then fill in:
+
+| Provider   | API URL filled in for you                       | Key                                                     |
+| ---------- | ----------------------------------------------- | ------------------------------------------------------- |
+| OpenAI     | `https://api.openai.com/v1/chat/completions`    | required                                                |
+| Anthropic  | `https://api.anthropic.com/v1/chat/completions` | required                                                |
+| OpenRouter | `https://openrouter.ai/api/v1/chat/completions` | required                                                |
+| Ollama     | `http://localhost:11434/v1/chat/completions`    | optional (only sent if you enter one for this provider) |
+| LM Studio  | `http://localhost:1234/v1/chat/completions`     | optional (only sent if you enter one for this provider) |
+| vLLM       | `http://localhost:8000/v1/chat/completions`     | optional (only sent if you enter one for this provider) |
+| Custom     | whatever you enter                              | optional (only sent if you enter one for this provider) |
+
+- **Model** is required and has no default (model names change too often).
+  Use a vision-capable model.
+- **API key** is stored in Zotero's login manager, not in prefs, and saved
+  per provider: switching provider shows that provider's key, so one
+  provider's key is never sent to another.
+- **Prompt** defaults to "Describe this image in a few sentences."
+  **Timeout** is per image, in seconds (default 120).
+- **Advanced JSON** still overrides anything set here.
+
+**Server setup.** docling-serve refuses remote calls unless you allow them.
+Start it with both variables set:
+
+```bash
+DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true \
+DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG=true \
+docling-serve run
+```
+
+The plugin asks the server (`/v1/capabilities`) which request field it
+accepts. Servers that allow custom picture-description configs get the newer
+`picture_description_custom_config` field, which needs both variables. If
+the server doesn't report the newer field (an older docling-serve, or the
+second variable not set), the plugin uses `picture_description_api`, which
+needs only `DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true`.
+
+**Two machines.** docling-serve makes the call to the provider, from its own
+machine, not from Zotero. `localhost` in the API URL means the server's
+localhost. If docling-serve runs in Docker and the provider (for example
+Ollama) runs on the host, use
+`http://host.docker.internal:11434/v1/chat/completions`.
+
+**Test Remote API is free.** It lists the provider's models
+(`GET …/models`) from this computer, which doesn't use credits. OpenAI,
+Anthropic and OpenRouter ask for confirmation first. No PDF or image is sent.
+It checks that the URL and key work, and whether your model name is in the
+provider's list — not that docling-serve can reach the provider.
+
+**If a conversion fails.** docling-serve 1.36 hides error details, so the
+plugin adds hints: is the server flag set, can the server reach the provider,
+is the model vision-capable, are the settings right. If conversions fail only
+with the remote API on, please open an issue. The newer field relies on an
+undocumented `model_spec` in docling-serve, which may change.
+
+Each figure is sent to the provider you choose, and the key is forwarded to
+docling-serve with every conversion. Use HTTPS if docling-serve is not on
+your own machine. See [SECURITY.md](SECURITY.md).
 
 ---
 

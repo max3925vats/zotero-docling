@@ -34,13 +34,14 @@ Reporters will be credited in the release notes unless they prefer to remain ano
 
 ## A note on stored credentials
 
-The plugin supports optional authentication (Bearer token, Basic auth, or a custom header) against a protected `docling-serve` instance. These credentials are stored in `Zotero.Prefs`, which writes to a plain-text `prefs.js` file inside the user's Zotero profile directory. There is no OS-keyring integration in v1.
+The plugin keeps two secrets: the optional docling-serve credential (Bearer token, Basic-auth password, or custom header value) and the API keys for remote vision providers (one per provider, so a key is only ever sent to the provider it was entered for). Both are stored in Zotero's login manager (`logins.json` in the profile directory, encrypted), not in `prefs.js` and not in the Config Editor. Versions before 0.6.0 stored the docling-serve credential in plain-text `prefs.js`; 0.6.0 moves it on first start and removes the old pref once the copy is verified.
 
 Practical implications:
 
-- **Anyone with read access to the user's Zotero profile directory can read the stored credentials.** This includes other local users on the same machine, full-disk backups, and unencrypted sync targets.
-- **Use a least-privilege credential.** Prefer a server-side API key scoped to docling-serve only, or a Basic-auth account with no other use, over a shared secret that grants access elsewhere.
-- **Prefer HTTPS for non-local servers.** The configured auth header is sent on every request, including the `/health` preflight; over plain HTTP it is visible to anyone on the network path.
+- **Copying the whole Zotero profile copies the secrets.** Zotero doesn't support a primary password, so the encryption doesn't protect against someone with the full profile (other local users, full-disk backups, unencrypted sync targets). It does keep the secrets out of plain-text prefs, the Config Editor and pasted prefs.
+- **Use a least-privilege credential.** Prefer a server-side API key scoped to docling-serve only, or a Basic-auth account with no other use, over a shared secret that grants access elsewhere. For the provider key, use a key limited to what you need, with a spending limit where the provider offers one.
+- **The provider key passes through docling-serve.** It is sent to docling-serve with every conversion that uses the remote vision API, and docling-serve forwards it to the provider. Prefer HTTPS for non-local servers: the configured auth header is sent on every request, including the `/health` preflight, and over plain HTTP both it and the provider key are visible to anyone on the network path.
+- **Rolling back loses the docling-serve credential.** After 0.6.0 migrates it, 0.5.x and 0.4.x find nothing in prefs and send requests without it (HTTP 401) until you re-enter it.
 - **Profile-directory threats remain out of scope** (see below) — once an attacker has the profile, they can do worse things directly.
 
 ## Scope
