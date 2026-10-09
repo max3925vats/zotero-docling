@@ -16,7 +16,7 @@ pref-auth-secret = Secret
 pref-auth-token = Token
 pref-auth-password = Password
 pref-auth-header-value = Header value
-pref-auth-help = Sent on every request to docling-serve, including Test Connection. Stored unencrypted in your Zotero profile — use a least-privilege key, and prefer HTTPS for non-local servers.
+pref-auth-help = Sent on every request to docling-serve, including Test Connection. Stored in Zotero's login manager (encrypted, but readable by anyone with a copy of your Zotero profile) — use a least-privilege key, and prefer HTTPS for non-local servers.
 
 pref-behavior-title = Behavior
 pref-auto-convert =

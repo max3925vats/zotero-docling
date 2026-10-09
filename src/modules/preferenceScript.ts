@@ -6,8 +6,10 @@
 
 import { getLocaleID } from "../utils/locale";
 import { getPref, setPref } from "../utils/prefs";
+import { clearAllSecrets } from "../utils/secrets";
 import { FluentMessageId } from "../../typings/i10n";
 import { testServerConnection } from "./convert";
+import { bindSecretField } from "./remotePicPane";
 
 const LOG = "[zotero-docling]";
 
@@ -137,6 +139,9 @@ export function registerPrefsScripts(win: Window): void {
   keep(bindPresetCustomToggle(win, "vlm"));
   keep(bindPresetCustomToggle(win, "pic"));
   keep(bindAuthSchemeToggle(win));
+  keep(
+    bindSecretField(win, "zotero-docling-auth-secret", "docling-serve-auth"),
+  );
   keep(bindPresetDetail(win, "vlm", VLM_PRESET_DETAIL, "vlmPreset"));
   keep(
     bindPresetDetail(win, "pic", PIC_PRESET_DETAIL, "pictureDescriptionPreset"),
@@ -500,6 +505,16 @@ async function resetPrefs(
     }
   }
   Zotero.debug(`${LOG} prefs: reset ${cleared} keys to defaults`);
+
+  // Secrets live in the login manager, not prefs, so the loop above can't
+  // reach them. A failed clear is logged, not fatal: the pane still refreshes.
+  try {
+    await clearAllSecrets();
+  } catch (e) {
+    Zotero.debug(
+      `${LOG} prefs: clearing secrets failed: ${(e as Error).message}`,
+    );
+  }
 
   // Bring the dynamic parts of the pane back in line with the defaults.
   for (const refresh of refreshers) {

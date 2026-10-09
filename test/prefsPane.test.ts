@@ -5,6 +5,8 @@ import {
   authSecretLabelId,
   migrateLegacyCustomPreset,
 } from "../src/modules/preferenceScript";
+import { bindSecretField } from "../src/modules/remotePicPane";
+import { clearAllSecrets, getSecret, setSecret } from "../src/utils/secrets";
 
 // Audit H4 / M10: the auth secret label was relabelled with a bare Fluent ID
 // (blank label), and each preset's menulist and its "custom" text box were
@@ -106,6 +108,38 @@ describe("prefs pane", function () {
         `${p}-pref-auth-header-value`,
       );
       assert.strictEqual(authSecretLabelId("none"), `${p}-pref-auth-secret`);
+    });
+  });
+
+  describe("bindSecretField", function () {
+    afterEach(async function () {
+      await clearAllSecrets();
+    });
+
+    function fakeWin(input: HTMLInputElement): Window {
+      return { document: { getElementById: () => input } } as unknown as Window;
+    }
+
+    it("fills the input from the store and saves edits back", async function () {
+      const doc = Zotero.getMainWindow().document;
+      const input = doc.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "input",
+      ) as HTMLInputElement;
+      await setSecret("docling-serve-auth", "stored");
+      const refresh = bindSecretField(
+        fakeWin(input),
+        "x",
+        "docling-serve-auth",
+      );
+      assert.strictEqual(input.value, "stored");
+      input.value = "edited";
+      input.dispatchEvent(new (Zotero.getMainWindow() as any).Event("change"));
+      await new Promise((r) => setTimeout(r, 50));
+      assert.strictEqual(getSecret("docling-serve-auth"), "edited");
+      await setSecret("docling-serve-auth", "");
+      refresh();
+      assert.strictEqual(input.value, "");
     });
   });
 });
