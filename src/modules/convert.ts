@@ -1063,9 +1063,10 @@ async function convertAttachmentInner(
   }
 
   // --- 10. Import as a Zotero attachment (if enabled) ---
-  // Both the import and the follow-up setField/saveTx go through the global
-  // DB lock — parallel batches (maxConcurrency > 1) otherwise race on
-  // SQLite transactions and intermittently fail.
+  // The import goes through the global DB lock — parallel batches
+  // (maxConcurrency > 1) otherwise race on SQLite transactions and
+  // intermittently fail. The title is set by importFromFile in the same
+  // transaction, rather than by a second save afterwards.
   let attachmentID: number | undefined;
   if (attachToItem) {
     let newAttachment: Zotero.Item;
@@ -1075,6 +1076,7 @@ async function convertAttachmentInner(
           file: tmpPath,
           parentItemID,
           contentType: "text/markdown",
+          title: mdName,
         }),
       );
     } catch (e) {
@@ -1083,16 +1085,6 @@ async function convertAttachmentInner(
         status: "error",
         message: `Failed to import attachment: ${(e as Error).message}`,
       };
-    }
-    try {
-      await withDbLock(async () => {
-        newAttachment.setField("title", mdName);
-        await newAttachment.saveTx();
-      });
-    } catch (e) {
-      Zotero.debug(
-        `${LOG} title set failed (non-fatal): ${(e as Error).message}`,
-      );
     }
     attachmentID = newAttachment.id;
 
