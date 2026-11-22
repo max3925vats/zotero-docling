@@ -9,8 +9,7 @@
 import { getPref, setPref } from "../utils/prefs";
 import {
   hasMarkdownChild,
-  getLocalFilePath,
-  isConvertiblePdf,
+  convertiblePdfPath,
   mdNameForPdf,
   findMatchingMdChild,
   trashItem,
@@ -932,20 +931,16 @@ async function convertAttachmentInner(
     return { status: "skipped", reason: cancel.reason ?? "Cancelled" };
   }
 
-  // --- 1. Guard checks ---
-  if (!(await isConvertiblePdf(item))) {
+  // --- 1–2. Guard checks + local file (needed early for the filename-aware
+  // skip), with one existence check ---
+  const pdfPath = await convertiblePdfPath(item);
+  if (!pdfPath) {
     return {
       status: "skipped",
       reason: "Not a locally-stored PDF attachment with a parent item",
     };
   }
   const parentItemID = item.parentItemID as number;
-
-  // --- 2. Resolve local file (needed early for the filename-aware skip) ---
-  const pdfPath = await getLocalFilePath(item);
-  if (!pdfPath) {
-    return { status: "error", message: "PDF file not available locally" };
-  }
   const filename = PathUtils.filename(pdfPath);
 
   // --- 3. Skip-if-exists ---

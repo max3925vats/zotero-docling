@@ -32,7 +32,6 @@ import {
 } from "./ui";
 import {
   getPDFAttachments,
-  getLocalFilePath,
   findMatchingMdChild,
   sortLargestFirst,
 } from "../utils/zotero";
@@ -386,13 +385,9 @@ export async function runBatch(
 
     const runOne = async (item: Zotero.Item): Promise<void> => {
       // Per-item progress: show this PDF's filename while it's working.
-      let displayName = "";
-      try {
-        const p = await getLocalFilePath(item);
-        if (p) displayName = truncateMiddle(PathUtils.filename(p), 40);
-      } catch {
-        /* best-effort */
-      }
+      // The stored filename is enough for a label; convertAttachment checks
+      // that the file exists.
+      const displayName = truncateMiddle(item.attachmentFilename ?? "", 40);
       running++;
       refreshHeadline(displayName);
 

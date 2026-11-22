@@ -147,15 +147,25 @@ export async function sortLargestFirst(
     .map(({ item }) => item);
 }
 
-/** Convenience: true iff item is a locally-present PDF attachment with a parent. */
-export async function isConvertiblePdf(item: Zotero.Item): Promise<boolean> {
-  if (!item || (item.itemType as string) !== "attachment") return false;
-  if (item.attachmentContentType !== "application/pdf") return false;
-  if (!item.parentItemID) return false;
+/**
+ * The local file path of a convertible PDF — a PDF attachment with a parent
+ * whose file is on disk — or null when the item isn't one. Checks the file
+ * once, so callers can use the returned path without checking again.
+ */
+export async function convertiblePdfPath(
+  item: Zotero.Item,
+): Promise<string | null> {
+  if (!item || (item.itemType as string) !== "attachment") return null;
+  if (item.attachmentContentType !== "application/pdf") return null;
+  if (!item.parentItemID) return null;
   // LINK_MODE_LINKED_URL means there is no local file — only a URL bookmark.
   if (item.attachmentLinkMode === Zotero.Attachments.LINK_MODE_LINKED_URL) {
-    return false;
+    return null;
   }
-  const path = await getLocalFilePath(item);
-  return path !== null;
+  return getLocalFilePath(item);
+}
+
+/** Convenience: true iff item is a locally-present PDF attachment with a parent. */
+export async function isConvertiblePdf(item: Zotero.Item): Promise<boolean> {
+  return (await convertiblePdfPath(item)) !== null;
 }
