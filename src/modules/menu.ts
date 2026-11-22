@@ -36,6 +36,7 @@ import { getPref, setPref } from "../utils/prefs";
 import { busyMessage, releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
+import { effectiveConcurrency } from "../utils/effectiveConcurrency";
 import { truncateMiddle, formatDuration } from "../utils/format";
 import { onExportMarkdownZipClick } from "./markdownZipExport";
 import { onRemoveImagesClick, resolveMdTargets } from "./removeImages";
@@ -317,9 +318,9 @@ export async function runBatch(
       return false;
     }
 
-    const limit = Math.max(
-      1,
-      Math.min(8, Number(getPref("maxConcurrency") ?? 1) || 1),
+    const limit = effectiveConcurrency(
+      getPref("maxConcurrency"),
+      (getPref("useAsyncEndpoint") ?? false) as boolean,
     );
     const limiter = new ConcurrencyLimiter(limit);
 

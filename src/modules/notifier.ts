@@ -19,6 +19,7 @@ import {
 } from "./convert";
 import { toast } from "./ui";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
+import { effectiveConcurrency } from "../utils/effectiveConcurrency";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { formatDuration } from "../utils/format";
 
@@ -187,9 +188,9 @@ async function processPending(): Promise<void> {
       }
       preflightFailures = 0;
 
-      const limit = Math.max(
-        1,
-        Math.min(8, Number(getPref("maxConcurrency") ?? 1) || 1),
+      const limit = effectiveConcurrency(
+        getPref("maxConcurrency"),
+        (getPref("useAsyncEndpoint") ?? false) as boolean,
       );
       const limiter = new ConcurrencyLimiter(limit);
 
