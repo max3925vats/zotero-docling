@@ -34,6 +34,7 @@ import {
   getPDFAttachments,
   getLocalFilePath,
   findMatchingMdChild,
+  sortLargestFirst,
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
 import {
@@ -417,11 +418,15 @@ export async function runBatch(
       refreshHeadline();
     };
 
+    // In parallel, start the biggest PDFs first so the batch doesn't end
+    // with one large PDF converting alone (see sortLargestFirst).
+    const ordered = limit > 1 ? await sortLargestFirst(pdfs) : pdfs;
+
     // allSettled, not all: the lock must stay held until EVERY item has
     // finished, even if one of them throws (audit M3).
     startedAt = Date.now();
     await Promise.allSettled(
-      pdfs.map((item) => conversionQueue.run(() => runOne(item))),
+      ordered.map((item) => conversionQueue.run(() => runOne(item))),
     );
     // No DB writes from a plugin that's being unloaded.
     if (addon.data.alive) await applyStatusTagsToParents(batchResults);

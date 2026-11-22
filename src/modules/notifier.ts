@@ -22,6 +22,7 @@ import { conversionQueue } from "../utils/conversionQueue";
 import { effectiveConcurrency } from "../utils/effectiveConcurrency";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { formatBatchDuration } from "../utils/format";
+import { sortLargestFirst } from "../utils/zotero";
 
 const LOG = "[Docling/notifier]";
 const DEBOUNCE_MS = 3000;
@@ -198,9 +199,14 @@ async function processPending(): Promise<void> {
       // Shared with menu batches (see conversionQueue).
       conversionQueue.setLimit(limit);
 
-      const runOne = async (id: number): Promise<void> => {
-        const item = Zotero.Items.get(id);
-        if (!item) return;
+      // In parallel, start the biggest PDFs first (see sortLargestFirst).
+      const found = ids
+        .map((id) => Zotero.Items.get(id))
+        .filter((item): item is Zotero.Item => !!item);
+      const items = limit > 1 ? await sortLargestFirst(found) : found;
+
+      const runOne = async (item: Zotero.Item): Promise<void> => {
+        const id = item.id;
         let result: ConvertResult;
         try {
           result = await convertOrSkip(item, "auto-convert");
@@ -225,7 +231,7 @@ async function processPending(): Promise<void> {
       // allSettled: hold the lock until every item has finished (audit M3).
       startedAt = Date.now();
       await Promise.allSettled(
-        ids.map((id) => conversionQueue.run(() => runOne(id))),
+        items.map((item) => conversionQueue.run(() => runOne(item))),
       );
       // No DB writes from a plugin that's being unloaded.
       if (addon.data.alive) await applyStatusTagsToParents(batchResults);
