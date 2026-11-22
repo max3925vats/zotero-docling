@@ -45,7 +45,7 @@ pref("advancedJson", "");
 // Async transport (Phase 4). Off by default — the sync endpoint is faster
 // for short conversions. Turn on for long VLM jobs that would otherwise 504.
 pref("useAsyncEndpoint", false);
-pref("asyncPollIntervalSec", 5); // poll cadence in seconds (min 1)
+pref("asyncPollIntervalSec", 5); // longest gap between status checks, s (min 1); checks start at 1 s and double up to this
 // Absolute client-side wait ceiling for one async task, in minutes. Does NOT
 // cancel the server-side task (no upstream cancel API; see README). Range
 // [0, 1440]; 0 = no limit. Default 240 (4 hours) — enough for most VLM

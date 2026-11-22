@@ -566,6 +566,14 @@ async function fetchConvertResultSync(
 }
 
 /**
+ * The gap before the next async status check: double the last one, up to
+ * the configured poll interval. Exported for tests.
+ */
+export function pollAfterMs(lastGapMs: number, pollMs: number): number {
+  return Math.min(pollMs, Math.max(1, lastGapMs) * 2);
+}
+
+/**
  * Async transport: submit job → poll status → fetch result.
  * Avoids upstream proxy/gateway timeouts on long VLM conversions.
  */
@@ -639,14 +647,24 @@ async function fetchConvertResultAsync(
   //   (b) `consecutiveFailures` escalates: a Zotero.debug warning at 3
   //       failures, and a single toast at 10. Gives users a fast feedback
   //       loop when docling-serve dies mid-task, instead of appearing hung.
+  //
+  // Checks start 1 s after submit and the gap doubles up to the configured
+  // interval (see pollAfterMs), so a short PDF is picked up within about a
+  // second of finishing instead of a full interval later. Each check also
+  // asks the server to hold the request until the task finishes (`wait`);
+  // docling-serve's Ray engine does, its local and RQ engines answer at
+  // once, and then we sleep out the rest of the gap as before.
   const startedAt = Date.now();
+  const pollMs = pollSec * 1000;
+  let gapMs = Math.min(1000, pollMs);
+  let delayMs = gapMs;
   let consecutiveFailures = 0;
   let unresponsiveToastShown = false;
   while (true) {
     // The batch's abort token cuts the sleep short on shutdown, so this
     // loop never outlives the plugin. The server task keeps running.
     try {
-      await sleep(pollSec * 1000, cancel);
+      if (delayMs > 0) await sleep(delayMs, cancel);
     } catch (e) {
       if (e instanceof CancelledError) return cancelledOutcome(e);
       throw e;
@@ -659,16 +677,22 @@ async function fetchConvertResultAsync(
       };
     }
 
+    // The next check comes one (longer) gap after this one. A held request
+    // (long-poll) shortens the sleep below.
+    gapMs = pollAfterMs(gapMs, pollMs);
+    delayMs = gapMs;
+    const askedAt = Date.now();
     let poll:
       { ok: false; label: string } | { ok: true; status: TaskStatusResponse };
     try {
       poll = await withRequestTimeout(
-        timeoutMs("pollTimeoutSec", 30),
+        // The server may hold the request for up to `wait` seconds.
+        timeoutMs("pollTimeoutSec", 30) + pollMs,
         async (signal) => {
-          const r = await api.fetch(`${serverUrl}/v1/status/poll/${taskId}`, {
-            headers: authHeaders,
-            signal,
-          });
+          const r = await api.fetch(
+            `${serverUrl}/v1/status/poll/${taskId}?wait=${pollSec}`,
+            { headers: authHeaders, signal },
+          );
           if (!r.ok) {
             // 5xx/429 from a proxy or a busy server are usually transient:
             // throw so the catch below counts a failed poll and keeps going
@@ -742,7 +766,9 @@ async function fetchConvertResultAsync(
     if (s === "skipped") {
       return { ok: false, message: "Async task skipped by server" };
     }
-    // pending / started / undefined → keep polling
+    // pending / started / undefined → keep polling. If the server held the
+    // request (long-poll), only sleep out what's left of the gap.
+    delayMs = Math.max(0, delayMs - (Date.now() - askedAt));
   }
 
   // 3. Fetch result
