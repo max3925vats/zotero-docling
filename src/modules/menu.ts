@@ -47,7 +47,7 @@ import {
 import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { effectiveConcurrency } from "../utils/effectiveConcurrency";
-import { truncateMiddle, formatDuration } from "../utils/format";
+import { truncateMiddle, formatBatchDuration } from "../utils/format";
 import { onExportMarkdownZipClick } from "./markdownZipExport";
 import { onRemoveImagesClick, resolveMdTargets } from "./removeImages";
 
@@ -324,6 +324,9 @@ export async function runBatch(
 
   const total = pdfs.length;
   let done = 0;
+  let running = 0;
+  let limit = 1;
+  let startedAt = 0;
   let ok = 0;
   let skipped = 0;
   let failed = 0;
@@ -344,7 +347,7 @@ export async function runBatch(
       return false;
     }
 
-    const limit = effectiveConcurrency(
+    limit = effectiveConcurrency(
       getPref("maxConcurrency"),
       (getPref("useAsyncEndpoint") ?? false) as boolean,
     );
@@ -358,13 +361,17 @@ export async function runBatch(
       `${total} PDF${total === 1 ? "" : "s"}${concurrencyNote}`,
     );
 
-    // Update headline as each item completes — gives the user a live N-of-M
-    // counter even when items run in parallel. Best-effort: a UI hiccup must
-    // never abort the batch.
+    // Update headline as each item starts and completes — gives the user a
+    // live N-of-M counter. In parallel, the most recently started name alone
+    // reads as if only that PDF were converting, so show how many are
+    // running instead. Best-effort: a UI hiccup must never abort the batch.
     const refreshHeadline = (currentName?: string) => {
-      const label = currentName
-        ? `${opts.menuLabel}: (${done}/${total}) ${currentName}`
-        : `${opts.menuLabel}: (${done}/${total})`;
+      const label =
+        limit > 1 && running > 1
+          ? `${opts.menuLabel}: (${done}/${total}) · ${running} running`
+          : currentName
+            ? `${opts.menuLabel}: (${done}/${total}) ${currentName}`
+            : `${opts.menuLabel}: (${done}/${total})`;
       try {
         updateManagedHeadline(label);
       } catch {
@@ -381,6 +388,7 @@ export async function runBatch(
       } catch {
         /* best-effort */
       }
+      running++;
       refreshHeadline(displayName);
 
       let result: ConvertResult;
@@ -400,12 +408,14 @@ export async function runBatch(
         failed++;
         failureMessages.push(result.message);
       }
+      running--;
       done++;
       refreshHeadline();
     };
 
     // allSettled, not all: the lock must stay held until EVERY item has
     // finished, even if one of them throws (audit M3).
+    startedAt = Date.now();
     await Promise.allSettled(
       pdfs.map((item) => limiter.run(() => runOne(item))),
     );
@@ -438,15 +448,21 @@ export async function runBatch(
   }
 
   const allOk = failed === 0;
-  // Sum docling-serve's reported processing_time across OK items. With
-  // concurrency > 1 this is the SUM of work the server did, not the wall
-  // time the user waited — still the most honest number we have.
-  const totalSec = batchResults.reduce((acc, { result }) => {
+  // Elapsed time is what the user waited. docling-serve's processing_time
+  // summed across OK items is the work the server did; with concurrency > 1
+  // it can exceed the wait, so it is shown alongside.
+  const serverSec = batchResults.reduce((acc, { result }) => {
     if (result.status !== "ok") return acc;
     return acc + (result.processingTimeSec ?? 0);
   }, 0);
   const durationSuffix =
-    ok > 0 && totalSec > 0 ? ` — took ${formatDuration(totalSec)}` : "";
+    ok > 0
+      ? formatBatchDuration(
+          (Date.now() - startedAt) / 1000,
+          serverSec,
+          limit > 1,
+        )
+      : "";
   const summary = `OK ${ok} · skipped ${skipped} · failed ${failed}${durationSuffix}`;
   const body =
     failureMessages.length > 0

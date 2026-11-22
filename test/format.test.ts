@@ -4,6 +4,7 @@ import {
   truncateMiddle,
   formatDuration,
   formatBytes,
+  formatBatchDuration,
 } from "../src/utils/format";
 
 // Style notes for this file (Goldberg testing best practices):
@@ -206,6 +207,46 @@ describe("format helpers #cold", function () {
           expect(out).to.match(/^\d+(\.\d)? (B|KB|MB|GB|TB)$/);
         }),
       );
+    });
+  });
+
+  describe("formatBatchDuration", function () {
+    it("When conversions ran in parallel, then elapsed and server time are both shown", function () {
+      // Arrange
+      const elapsed = 250;
+      const server = 930;
+      // Act
+      const out = formatBatchDuration(elapsed, server, true);
+      // Assert
+      expect(out).to.equal(" — took 4m 10s (server time 15m 30s)");
+    });
+
+    it("When conversions ran one at a time, then only the elapsed time is shown", function () {
+      // Arrange
+      const elapsed = 250;
+      const server = 240;
+      // Act
+      const out = formatBatchDuration(elapsed, server, false);
+      // Assert
+      expect(out).to.equal(" — took 4m 10s");
+    });
+
+    it("When the server reported no processing time, then only the elapsed time is shown", function () {
+      // Arrange
+      const elapsed = 75;
+      // Act
+      const out = formatBatchDuration(elapsed, 0, true);
+      // Assert
+      expect(out).to.equal(" — took 1m 15s");
+    });
+
+    it("When no time elapsed, then the suffix is empty", function () {
+      // Arrange
+      const elapsed = 0;
+      // Act
+      const out = formatBatchDuration(elapsed, 10, true);
+      // Assert
+      expect(out).to.equal("");
     });
   });
 });

@@ -21,7 +21,7 @@ import { toast } from "./ui";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { effectiveConcurrency } from "../utils/effectiveConcurrency";
 import { notifyOnBatchComplete } from "../utils/notification";
-import { formatDuration } from "../utils/format";
+import { formatBatchDuration } from "../utils/format";
 
 const LOG = "[Docling/notifier]";
 const DEBOUNCE_MS = 3000;
@@ -150,6 +150,8 @@ async function processPending(): Promise<void> {
     const warnings: string[] = [];
     const batchResults: Array<{ item: Zotero.Item; result: ConvertResult }> =
       [];
+    let limit = 1;
+    let startedAt = 0;
 
     try {
       // Pre-flight: if docling-serve is down, skip the whole batch with one
@@ -188,7 +190,7 @@ async function processPending(): Promise<void> {
       }
       preflightFailures = 0;
 
-      const limit = effectiveConcurrency(
+      limit = effectiveConcurrency(
         getPref("maxConcurrency"),
         (getPref("useAsyncEndpoint") ?? false) as boolean,
       );
@@ -219,6 +221,7 @@ async function processPending(): Promise<void> {
       };
 
       // allSettled: hold the lock until every item has finished (audit M3).
+      startedAt = Date.now();
       await Promise.allSettled(ids.map((id) => limiter.run(() => runOne(id))));
       // No DB writes from a plugin that's being unloaded.
       if (addon.data.alive) await applyStatusTagsToParents(batchResults);
@@ -229,12 +232,20 @@ async function processPending(): Promise<void> {
 
     // Always toast — silent skips left users wondering why nothing happened
     // for standalone PDFs (no parent → skipped).
-    const totalSec = batchResults.reduce((acc, { result }) => {
+    // Elapsed time, plus the server's summed processing_time when parallel
+    // (see formatBatchDuration).
+    const serverSec = batchResults.reduce((acc, { result }) => {
       if (result.status !== "ok") return acc;
       return acc + (result.processingTimeSec ?? 0);
     }, 0);
     const durationSuffix =
-      ok > 0 && totalSec > 0 ? ` — took ${formatDuration(totalSec)}` : "";
+      ok > 0
+        ? formatBatchDuration(
+            (Date.now() - startedAt) / 1000,
+            serverSec,
+            limit > 1,
+          )
+        : "";
     const summary = `OK ${ok} · skipped ${skipped} · failed ${failed}${durationSuffix}`;
     const detail =
       failMessages.length > 0
