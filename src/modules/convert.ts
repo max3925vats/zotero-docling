@@ -983,15 +983,28 @@ async function convertAttachmentInner(
   // Naming: citationKey when set on the parent (BBT), else parent's Zotero key.
   // Two PDFs under one parent will produce the same export filename — last
   // write wins. Documented in the README.
+  //
+  // Written to a per-item temp file and moved into place, so the export is
+  // always one complete conversion. With Parallel conversions > 1, two PDFs
+  // under one parent write this path at the same time; a direct write could
+  // interleave them, and a folder watcher (Obsidian, an indexer) could read
+  // a half-written file.
   let exportWarning: string | undefined;
   if (exportFolder) {
+    let exportTmpPath: string | undefined;
     try {
       await IOUtils.makeDirectory(exportFolder, { ignoreExisting: true });
       const exportName = `${exportBaseName(parentItem)}.md`;
       const exportPath = PathUtils.join(exportFolder, exportName);
-      await IOUtils.writeUTF8(exportPath, markdown);
+      exportTmpPath = `${exportPath}.${item.key}.tmp`;
+      await IOUtils.writeUTF8(exportPath, markdown, { tmpPath: exportTmpPath });
       log(`exported ${exportPath}`);
     } catch (e) {
+      if (exportTmpPath) {
+        await IOUtils.remove(exportTmpPath, { ignoreAbsent: true }).catch(
+          () => {},
+        );
+      }
       const message = `Failed to write to export folder: ${(e as Error).message}`;
       Zotero.debug(`${LOG} ${message}`);
       // If the export folder was the only output, the conversion produced
