@@ -66,8 +66,10 @@ pref("syncTimeoutMin", 10);
 
 // Phase 5a: client-side polish
 // Concurrent conversions in a batch (1 = sequential, current behavior).
-// More only helps when paired with the async endpoint AND a server started
-// with --workers >= 2; otherwise requests just queue server-side.
+// docling-serve's local engine runs DOCLING_SERVE_ENG_LOC_NUM_WORKERS
+// conversions at once (default 2); more than that just queues server-side.
+// Not uvicorn's --workers: each worker process keeps its own in-memory task
+// list, so async status polls can land on the wrong process and 404.
 pref("maxConcurrency", 1);
 // Prepend YAML frontmatter (title/authors/year/doi/url/zotero_key/citation_key)
 // to every .md output. Off-by-default would be a regression — most lit-lake

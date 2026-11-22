@@ -346,6 +346,22 @@ blip, a proxy returning errors), the plugin keeps trying until Max wait, and
 a one-time toast appears around the tenth consecutive failure so a dead
 server isn't silent.
 
+### Parallel conversions
+
+**Settings → zotero-docling → Parallel conversions** (default 1) sets how
+many PDFs one batch sends to docling-serve at a time. How many the server
+actually converts at once is a server setting:
+`DOCLING_SERVE_ENG_LOC_NUM_WORKERS`, which defaults to **2**. So on a stock
+server, **2 with the async endpoint turned on** is the setting that helps;
+anything above the server's worker count just waits in its queue.
+
+Raise the server side with the environment variable, for example
+`DOCLING_SERVE_ENG_LOC_NUM_WORKERS=4 docling-serve run`. **Don't** use
+`--workers` / `UVICORN_WORKERS` for this: that starts several server
+processes, each with its own in-memory task list, so an async job submitted
+to one process can't be found by a status check that lands on another, and
+the conversion can fail with `Poll HTTP 404`.
+
 ---
 
 ## Troubleshooting
