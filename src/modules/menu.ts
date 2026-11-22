@@ -37,15 +37,14 @@ import {
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
 import {
-  batchHolder,
   busyMessage,
-  isStopRequested,
+  hasUnstoppedConversion,
   releaseBatch,
   requestStopBatch,
   tryAcquireBatch,
 } from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
-import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
+import { conversionQueue } from "../utils/conversionQueue";
 import {
   effectiveConcurrency,
   requestedConcurrency,
@@ -266,12 +265,6 @@ function onStopBatchClick(): void {
   }
 }
 
-/** The stop item only applies to conversion batches, not Remove Images. */
-function isConversionBatchRunning(): boolean {
-  const owner = batchHolder();
-  return owner === "menu" || owner === "auto-convert";
-}
-
 /**
  * Run convertAttachment over a resolved PDF list with parallel concurrency,
  * per-item progress, and aggregated status tags + toast.
@@ -318,8 +311,9 @@ export async function runBatch(
     if (!confirmReconvertWithUser(pdfs.length)) return false;
   }
 
-  // Only one batch at a time (menu, auto-convert and Remove Images share
-  // the lock). Acquire is synchronous, so two rapid clicks can't both pass.
+  // One menu batch at a time, alongside auto-convert but never alongside
+  // Remove Images (see batchLock). Acquire is synchronous, so two rapid
+  // clicks can't both pass.
   if (!tryAcquireBatch("menu")) {
     toast("Docling", busyMessage(), false);
     return false;
@@ -354,7 +348,9 @@ export async function runBatch(
       getPref("maxConcurrency"),
       (getPref("useAsyncEndpoint") ?? false) as boolean,
     );
-    const limiter = new ConcurrencyLimiter(limit);
+    // The queue is shared with auto-convert, so the two together never run
+    // more than the setting allows.
+    conversionQueue.setLimit(limit);
 
     // Hide the noisy "concurrency=1" suffix when the user is on the default —
     // only surface it when they've actually opted into parallelism. Shows
@@ -401,7 +397,7 @@ export async function runBatch(
 
       let result: ConvertResult;
       try {
-        result = await convertOrSkip(item, opts.force);
+        result = await convertOrSkip(item, "menu", opts.force);
       } catch (e) {
         result = { status: "error", message: (e as Error).message };
       }
@@ -425,7 +421,7 @@ export async function runBatch(
     // finished, even if one of them throws (audit M3).
     startedAt = Date.now();
     await Promise.allSettled(
-      pdfs.map((item) => limiter.run(() => runOne(item))),
+      pdfs.map((item) => conversionQueue.run(() => runOne(item))),
     );
     // No DB writes from a plugin that's being unloaded.
     if (addon.data.alive) await applyStatusTagsToParents(batchResults);
@@ -433,7 +429,7 @@ export async function runBatch(
     unexpected = e as Error;
     log(`batch failed unexpectedly: ${unexpected.message}`);
   } finally {
-    releaseBatch();
+    releaseBatch("menu");
   }
 
   if (unexpected) {
@@ -599,7 +595,7 @@ export function registerMenus(): void {
         menuType: "menuitem",
         l10nID: getLocaleID("menu-tools-stop-batch"),
         onShowing: (_e: Event, ctx: any) =>
-          ctx.setVisible(isConversionBatchRunning() && !isStopRequested()),
+          ctx.setVisible(hasUnstoppedConversion()),
         onCommand: () => onStopBatchClick(),
       },
     ],

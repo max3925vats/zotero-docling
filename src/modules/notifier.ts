@@ -18,7 +18,7 @@ import {
   type ConvertResult,
 } from "./convert";
 import { toast } from "./ui";
-import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
+import { conversionQueue } from "../utils/conversionQueue";
 import { effectiveConcurrency } from "../utils/effectiveConcurrency";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { formatBatchDuration } from "../utils/format";
@@ -112,11 +112,12 @@ async function processPending(): Promise<void> {
     debounceTimer = null;
     log(`processing ${ids.length} pending PDF(s)`);
 
-    // Defer to any batch that's already running (menu, Remove Images). The
-    // lock is taken here, synchronously, BEFORE the preflight await — so a
-    // menu click during preflight can't start a second batch (audit M2).
+    // Defer to Remove Images if it's running. A menu batch doesn't block
+    // us: the two share the lock and the conversion queue. The lock is taken
+    // here, synchronously, BEFORE the preflight await — so Remove Images
+    // can't start in between (audit M2).
     if (!tryAcquireBatch("auto-convert")) {
-      log("a batch is already running — re-queueing for next debounce tick");
+      log("Remove Images is running — re-queueing for next debounce tick");
       // Put the IDs back so we'll process them after the current batch ends.
       for (const id of ids) pendingIDs.add(id);
       // Toast ONCE per deferral cycle so the user knows auto-convert is
@@ -194,14 +195,15 @@ async function processPending(): Promise<void> {
         getPref("maxConcurrency"),
         (getPref("useAsyncEndpoint") ?? false) as boolean,
       );
-      const limiter = new ConcurrencyLimiter(limit);
+      // Shared with menu batches (see conversionQueue).
+      conversionQueue.setLimit(limit);
 
       const runOne = async (id: number): Promise<void> => {
         const item = Zotero.Items.get(id);
         if (!item) return;
         let result: ConvertResult;
         try {
-          result = await convertOrSkip(item);
+          result = await convertOrSkip(item, "auto-convert");
         } catch (e) {
           result = { status: "error", message: (e as Error).message };
           log(`auto-convert threw for item ${id}: ${(e as Error).message}`);
@@ -222,11 +224,13 @@ async function processPending(): Promise<void> {
 
       // allSettled: hold the lock until every item has finished (audit M3).
       startedAt = Date.now();
-      await Promise.allSettled(ids.map((id) => limiter.run(() => runOne(id))));
+      await Promise.allSettled(
+        ids.map((id) => conversionQueue.run(() => runOne(id))),
+      );
       // No DB writes from a plugin that's being unloaded.
       if (addon.data.alive) await applyStatusTagsToParents(batchResults);
     } finally {
-      releaseBatch();
+      releaseBatch("auto-convert");
     }
     if (ok + failed + skipped === 0) return;
 

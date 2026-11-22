@@ -218,7 +218,7 @@ export async function onRemoveImagesClick(
       log(`stripped ${replaced} image(s) from ${path}`);
     }
   } finally {
-    releaseBatch();
+    releaseBatch("remove-images");
   }
 
   const detailParts: string[] = [];

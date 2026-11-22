@@ -70,4 +70,58 @@ describe("ConcurrencyLimiter", function () {
       .catch(() => undefined);
     assert.strictEqual(await limiter.run(async () => "next"), "next");
   });
+
+  it("starts waiting tasks at once when setLimit raises the limit", async function () {
+    const limiter = new ConcurrencyLimiter(1);
+    let active = 0;
+    let maxActive = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const task = () =>
+      limiter.run(async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await gate;
+        active--;
+      });
+    const all = [task(), task(), task()];
+    await hops(2);
+    limiter.setLimit(3);
+    await hops(2);
+    const runningAfterRaise = active;
+    release();
+    await Promise.all(all);
+    assert.strictEqual(runningAfterRaise, 3);
+    assert.strictEqual(maxActive, 3);
+  });
+
+  it("never exceeds a lowered limit once running tasks finish", async function () {
+    const limiter = new ConcurrencyLimiter(3);
+    let active = 0;
+    let maxWhileLaterRan = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const first = [1, 2, 3].map(() =>
+      limiter.run(async () => {
+        active++;
+        await gate;
+        await hops(1);
+        active--;
+      }),
+    );
+    await hops(2);
+    limiter.setLimit(1);
+    const later = [1, 2, 3].map(() =>
+      limiter.run(async () => {
+        active++;
+        maxWhileLaterRan = Math.max(maxWhileLaterRan, active);
+        await hops(3);
+        active--;
+      }),
+    );
+    release();
+    await Promise.all([...first, ...later]);
+    // The later tasks only start once the first three are done, one by one.
+    assert.strictEqual(maxWhileLaterRan, 1);
+  });
 });

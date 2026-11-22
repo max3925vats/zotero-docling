@@ -867,18 +867,20 @@ export async function convertAttachment(
 }
 
 /**
- * Convert one PDF of a running batch, or skip it if the batch was told to
- * stop before this PDF started. Shared by the menu and auto-convert batches.
+ * Convert one PDF of `owner`'s running batch, or skip it if that batch was
+ * told to stop before this PDF started. Shared by the menu and auto-convert
+ * batches.
  */
 export async function convertOrSkip(
   item: Zotero.Item,
+  owner: "menu" | "auto-convert",
   force = false,
 ): Promise<ConvertResult> {
   // Stop sending new PDFs once shutdown has begun (audit M7).
   if (!addon.data.alive) {
     return { status: "skipped", reason: "Plugin is shutting down" };
   }
-  if (isStopRequested()) {
+  if (isStopRequested(owner)) {
     return { status: "skipped", reason: getString("batch-stopped-reason") };
   }
   return convertAttachment(item, { force, cancel: batchAbortToken() });
