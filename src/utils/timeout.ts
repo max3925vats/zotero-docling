@@ -2,6 +2,8 @@
 // connection but never answers hung a batch forever — and because the batch
 // never finished, every later batch was refused until Zotero restarted.
 
+import { CancelledError, type CancelToken } from "./cancel";
+
 /** Thrown when a request exceeds its timeout. */
 export class RequestTimeoutError extends Error {
   constructor(public readonly ms: number) {
@@ -24,24 +26,35 @@ export function formatTimeout(ms: number): string {
  * the signal. Pass the AbortController constructor from the same realm as
  * the fetch being used (the plugin sandbox and the main window are different
  * realms); it defaults to this realm's.
+ *
+ * When `cancel` fires, the request is aborted the same way and the call
+ * rejects with CancelledError.
  */
 export async function withRequestTimeout<T>(
   ms: number,
   run: (signal?: AbortSignal) => Promise<T>,
   AbortCtor: typeof AbortController | undefined = (globalThis as any)
     .AbortController,
+  cancel?: CancelToken,
 ): Promise<T> {
+  if (cancel?.cancelled) throw new CancelledError(cancel.reason ?? "Cancelled");
   const controller = AbortCtor ? new AbortCtor() : undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let offCancel: (() => void) | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller?.abort();
       reject(new RequestTimeoutError(ms));
     }, ms);
+    offCancel = cancel?.onCancel((reason) => {
+      controller?.abort();
+      reject(new CancelledError(reason));
+    });
   });
   try {
     return await Promise.race([run(controller?.signal), timeout]);
   } finally {
     clearTimeout(timer);
+    offCancel?.();
   }
 }

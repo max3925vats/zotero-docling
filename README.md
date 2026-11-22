@@ -313,7 +313,11 @@ Practical consequences:
 - Closing the toast or quitting Zotero does **not** stop the server-side
   conversion. The PDF will continue to be processed in the background until
   it completes naturally.
-- If you start a long VLM batch and want it to stop, the only way is to
+- To stop a batch from sending any more PDFs, use **Tools → Docling: Stop
+  after the PDFs in progress** (shown while a batch runs). PDFs already sent
+  to docling-serve still finish and are attached, so no server work is
+  wasted.
+- To stop the PDFs docling-serve is already converting, the only way is to
   restart `docling-serve`.
 - Once the upstream cancel API exists, we'll add a cancel button that
   actually does what it says.

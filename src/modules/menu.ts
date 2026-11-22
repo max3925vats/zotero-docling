@@ -9,14 +9,17 @@
 // Visibility logic + batch orchestration live here. The conversion of an
 // individual PDF lives in convert.ts.
 //
-// No cancel menu — docling-serve has no per-task cancel API (upstream issue
-// docling-project/docling-serve#447) and no client-disconnect handling
-// (#401), so a client-side abort would just hide a still-running conversion
-// from the user without saving any compute. See README "Known limitations".
+// No cancel for in-flight PDFs — docling-serve has no per-task cancel API
+// (upstream issue docling-project/docling-serve#447) and no client-disconnect
+// handling (#401), so a client-side abort would just hide a still-running
+// conversion from the user without saving any compute. See README "Known
+// limitations". The Tools menu's "Stop after the PDFs in progress" only
+// keeps a batch from sending PDFs it hasn't started yet, which does save
+// server work.
 
 import { getLocaleID, getString } from "../utils/locale";
 import {
-  convertAttachment,
+  convertOrSkip,
   applyStatusTagsToParents,
   preflightServer,
   type ConvertResult,
@@ -33,7 +36,14 @@ import {
   findMatchingMdChild,
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
-import { busyMessage, releaseBatch, tryAcquireBatch } from "../utils/batchLock";
+import {
+  batchHolder,
+  busyMessage,
+  isStopRequested,
+  releaseBatch,
+  requestStopBatch,
+  tryAcquireBatch,
+} from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { effectiveConcurrency } from "../utils/effectiveConcurrency";
@@ -244,6 +254,22 @@ function confirmReconvertWithUser(count: number): boolean {
 }
 
 /**
+ * Tools-menu "Stop after the PDFs in progress": the running conversion batch
+ * sends no more PDFs; the ones docling-serve is already working on finish.
+ */
+function onStopBatchClick(): void {
+  if (requestStopBatch()) {
+    toast("Docling", getString("toast-batch-stopping"), true);
+  }
+}
+
+/** The stop item only applies to conversion batches, not Remove Images. */
+function isConversionBatchRunning(): boolean {
+  const owner = batchHolder();
+  return owner === "menu" || owner === "auto-convert";
+}
+
+/**
  * Run convertAttachment over a resolved PDF list with parallel concurrency,
  * per-item progress, and aggregated status tags + toast.
  * `force` bypasses the skipIfExists guard and pre-deletes existing .md.
@@ -359,10 +385,7 @@ export async function runBatch(
 
       let result: ConvertResult;
       try {
-        // Stop sending new PDFs once shutdown has begun (audit M7).
-        result = addon.data.alive
-          ? await convertAttachment(item, { force: opts.force })
-          : { status: "skipped", reason: "Plugin is shutting down" };
+        result = await convertOrSkip(item, opts.force);
       } catch (e) {
         result = { status: "error", message: (e as Error).message };
       }
@@ -386,7 +409,8 @@ export async function runBatch(
     await Promise.allSettled(
       pdfs.map((item) => limiter.run(() => runOne(item))),
     );
-    await applyStatusTagsToParents(batchResults);
+    // No DB writes from a plugin that's being unloaded.
+    if (addon.data.alive) await applyStatusTagsToParents(batchResults);
   } catch (e) {
     unexpected = e as Error;
     log(`batch failed unexpectedly: ${unexpected.message}`);
@@ -545,6 +569,14 @@ export function registerMenus(): void {
         menuType: "menuitem",
         l10nID: getLocaleID("menu-tools-remove-images"),
         onCommand: () => void onRemoveImagesClick("tools"),
+      },
+      {
+        // Only while a conversion batch is running.
+        menuType: "menuitem",
+        l10nID: getLocaleID("menu-tools-stop-batch"),
+        onShowing: (_e: Event, ctx: any) =>
+          ctx.setVisible(isConversionBatchRunning() && !isStopRequested()),
+        onCommand: () => onStopBatchClick(),
       },
     ],
   });

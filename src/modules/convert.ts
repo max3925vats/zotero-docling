@@ -23,6 +23,9 @@ import { withDbLock } from "../utils/dbLock";
 import { enrichServerError } from "../utils/serverErrorHints";
 import { toast } from "./ui";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
+import { CancelledError, sleep, type CancelToken } from "../utils/cancel";
+import { batchAbortToken, isStopRequested } from "../utils/batchLock";
+import { getString } from "../utils/locale";
 
 const LOG = "[zotero-docling]";
 
@@ -412,7 +415,13 @@ function formatServerErrors(data: ConvertResponse): string {
 // ---------------------------------------------------------------------------
 
 type FetchOutcome =
-  { ok: true; data: ConvertResponse } | { ok: false; message: string };
+  | { ok: true; data: ConvertResponse }
+  | { ok: false; message: string; cancelled?: true };
+
+/** Outcome for a request cut short by the batch's abort token. */
+function cancelledOutcome(e: CancelledError): FetchOutcome {
+  return { ok: false, message: e.message, cancelled: true };
+}
 
 interface TaskStatusResponse {
   task_id?: string;
@@ -525,6 +534,7 @@ async function fetchConvertResultSync(
   serverUrl: string,
   form: FormData,
   api: ReturnType<typeof getWebApis>,
+  cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   try {
     return await withRequestTimeout(
@@ -539,8 +549,10 @@ async function fetchConvertResultSync(
         return parseConvertResponse(response);
       },
       api.AbortController,
+      cancel,
     );
   } catch (e) {
+    if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} sync fetch failed: ${(e as Error).message}`);
     return {
       ok: false,
@@ -553,11 +565,6 @@ async function fetchConvertResultSync(
   }
 }
 
-/** Plain sleep — no abort plumbing (see file header note on cancel). */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
  * Async transport: submit job → poll status → fetch result.
  * Avoids upstream proxy/gateway timeouts on long VLM conversions.
@@ -566,6 +573,7 @@ async function fetchConvertResultAsync(
   serverUrl: string,
   form: FormData,
   api: ReturnType<typeof getWebApis>,
+  cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   const pollSec = Math.max(
     1,
@@ -600,12 +608,14 @@ async function fetchConvertResultAsync(
         };
       },
       api.AbortController,
+      cancel,
     );
     if ("label" in submitted) {
       return { ok: false, message: `Submit ${submitted.label}` };
     }
     submitBody = submitted.body;
   } catch (e) {
+    if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} async submit failed: ${(e as Error).message}`);
     return {
       ok: false,
@@ -633,7 +643,14 @@ async function fetchConvertResultAsync(
   let consecutiveFailures = 0;
   let unresponsiveToastShown = false;
   while (true) {
-    await sleep(pollSec * 1000);
+    // The batch's abort token cuts the sleep short on shutdown, so this
+    // loop never outlives the plugin. The server task keeps running.
+    try {
+      await sleep(pollSec * 1000, cancel);
+    } catch (e) {
+      if (e instanceof CancelledError) return cancelledOutcome(e);
+      throw e;
+    }
 
     if (Date.now() - startedAt > maxWaitMs) {
       return {
@@ -677,9 +694,11 @@ async function fetchConvertResultAsync(
           return { ok: true as const, status: parsed as TaskStatusResponse };
         },
         api.AbortController,
+        cancel,
       );
       consecutiveFailures = 0;
     } catch (e) {
+      if (e instanceof CancelledError) return cancelledOutcome(e);
       // A poll that times out counts as one failed poll, like a network blip.
       consecutiveFailures++;
       Zotero.debug(
@@ -738,8 +757,10 @@ async function fetchConvertResultAsync(
         return parseConvertResponse(r);
       },
       api.AbortController,
+      cancel,
     );
   } catch (e) {
+    if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} async result fetch failed: ${(e as Error).message}`);
     return {
       ok: false,
@@ -760,12 +781,13 @@ async function fetchConvertResult(
   serverUrl: string,
   form: FormData,
   api: ReturnType<typeof getWebApis>,
+  cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   const useAsync = (getPref("useAsyncEndpoint") ?? false) as boolean;
   log(`transport=${useAsync ? "async" : "sync"}`);
   return useAsync
-    ? fetchConvertResultAsync(serverUrl, form, api)
-    : fetchConvertResultSync(serverUrl, form, api);
+    ? fetchConvertResultAsync(serverUrl, form, api, cancel)
+    : fetchConvertResultSync(serverUrl, form, api, cancel);
 }
 
 /**
@@ -773,10 +795,13 @@ async function fetchConvertResult(
  * Caller is responsible for any UI feedback AND for applying status tags
  * (call `applyStatusTagsToParents` after a batch) — this function only
  * returns the per-attachment result.
+ *
+ * `cancel` (the batch's abort token) stops the client-side wait and skips
+ * every write to Zotero; the result is then "skipped" with its reason.
  */
 export async function convertAttachment(
   item: Zotero.Item,
-  options?: { force?: boolean },
+  options?: { force?: boolean; cancel?: CancelToken },
 ): Promise<ConvertResult> {
   // Dedupe: if a conversion for this exact attachment is already running
   // somewhere, skip the duplicate rather than queueing a second one.
@@ -791,11 +816,33 @@ export async function convertAttachment(
   }
 }
 
+/**
+ * Convert one PDF of a running batch, or skip it if the batch was told to
+ * stop before this PDF started. Shared by the menu and auto-convert batches.
+ */
+export async function convertOrSkip(
+  item: Zotero.Item,
+  force = false,
+): Promise<ConvertResult> {
+  // Stop sending new PDFs once shutdown has begun (audit M7).
+  if (!addon.data.alive) {
+    return { status: "skipped", reason: "Plugin is shutting down" };
+  }
+  if (isStopRequested()) {
+    return { status: "skipped", reason: getString("batch-stopped-reason") };
+  }
+  return convertAttachment(item, { force, cancel: batchAbortToken() });
+}
+
 async function convertAttachmentInner(
   item: Zotero.Item,
-  options?: { force?: boolean },
+  options?: { force?: boolean; cancel?: CancelToken },
 ): Promise<ConvertResult> {
   const force = options?.force ?? false;
+  const cancel = options?.cancel;
+  if (cancel?.cancelled) {
+    return { status: "skipped", reason: cancel.reason ?? "Cancelled" };
+  }
 
   // --- 1. Guard checks ---
   if (!(await isConvertiblePdf(item))) {
@@ -868,9 +915,15 @@ async function convertAttachmentInner(
 
   // --- 6. Talk to docling-serve via sync or async transport ---
   log(`send ${serverUrl} file=${filename}`);
-  const outcome = await fetchConvertResult(serverUrl, form, api);
+  const outcome = await fetchConvertResult(serverUrl, form, api, cancel);
   if (!outcome.ok) {
-    return { status: "error", message: outcome.message };
+    return outcome.cancelled
+      ? { status: "skipped", reason: outcome.message }
+      : { status: "error", message: outcome.message };
+  }
+  // Aborted after the result arrived: write nothing to Zotero.
+  if (cancel?.cancelled) {
+    return { status: "skipped", reason: cancel.reason ?? "Cancelled" };
   }
   const data = outcome.data;
 

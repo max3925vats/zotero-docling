@@ -10,6 +10,7 @@ import {
 } from "./modules/windowListeners";
 import { createZToolkit } from "./utils/ztoolkit";
 import { getPref, setPref } from "./utils/prefs";
+import { abortBatch } from "./utils/batchLock";
 
 async function onStartup(): Promise<void> {
   await Promise.all([
@@ -127,6 +128,10 @@ function onShutdown(): void {
   // First, so running batches stop picking up new items (menu/notifier
   // check `alive` between items).
   addon.data.alive = false;
+  // Then cut short in-flight waits (async status polls, open requests), so
+  // they don't run on for up to asyncMaxWaitMin and write to Zotero after
+  // the plugin is gone. docling-serve keeps converting regardless.
+  safely("batch abort", () => abortBatch("Plugin is shutting down"));
   // Every step runs even if an earlier one throws; previously one throw
   // skipped the rest, including unregistering the instance (audit M7).
   safely("notifier removal", unregisterNotifier);

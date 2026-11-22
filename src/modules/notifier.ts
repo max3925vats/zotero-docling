@@ -12,8 +12,8 @@ import { getPref } from "../utils/prefs";
 import { getString } from "../utils/locale";
 import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import {
-  convertAttachment,
   applyStatusTagsToParents,
+  convertOrSkip,
   preflightServer,
   type ConvertResult,
 } from "./convert";
@@ -199,10 +199,7 @@ async function processPending(): Promise<void> {
         if (!item) return;
         let result: ConvertResult;
         try {
-          // Stop sending new PDFs once shutdown has begun (audit M7).
-          result = addon.data.alive
-            ? await convertAttachment(item)
-            : { status: "skipped", reason: "Plugin is shutting down" };
+          result = await convertOrSkip(item);
         } catch (e) {
           result = { status: "error", message: (e as Error).message };
           log(`auto-convert threw for item ${id}: ${(e as Error).message}`);
@@ -223,7 +220,8 @@ async function processPending(): Promise<void> {
 
       // allSettled: hold the lock until every item has finished (audit M3).
       await Promise.allSettled(ids.map((id) => limiter.run(() => runOne(id))));
-      await applyStatusTagsToParents(batchResults);
+      // No DB writes from a plugin that's being unloaded.
+      if (addon.data.alive) await applyStatusTagsToParents(batchResults);
     } finally {
       releaseBatch();
     }

@@ -13,3 +13,5 @@ menu-remove-images =
     .label = Ukloni slike iz Markdowna
 menu-tools-remove-images =
     .label = Docling: Ukloni slike iz Markdowna…
+menu-tools-stop-batch =
+    .label = Docling: Zaustavi posle PDF-ova koji su u obradi

@@ -13,3 +13,5 @@ menu-remove-images =
     .label = Remove images from markdown
 menu-tools-remove-images =
     .label = Docling: Remove images from markdown…
+menu-tools-stop-batch =
+    .label = Docling: Stop after the PDFs in progress
