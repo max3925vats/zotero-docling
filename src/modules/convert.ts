@@ -355,6 +355,8 @@ const TAG_DONE = "docling/done";
 const TAG_INCOMPLETE = "docling/incomplete";
 const TAG_ERROR = "docling/error";
 const ALL_STATUS_TAGS = [TAG_DONE, TAG_INCOMPLETE, TAG_ERROR];
+/** Parents saved per status-tag transaction. */
+const STATUS_TAG_CHUNK = 50;
 
 /**
  * Aggregate a batch of (item, result) pairs by parent item and apply exactly
@@ -367,6 +369,12 @@ const ALL_STATUS_TAGS = [TAG_DONE, TAG_INCOMPLETE, TAG_ERROR];
  *   - some OK + some errors     → docling/incomplete
  *   - all errors (no OK)        → docling/error
  *   - all skipped               → no change
+ *
+ * Parents are saved in one transaction per STATUS_TAG_CHUNK rather than one
+ * each, so a large batch doesn't end with hundreds of transactions in a row.
+ * Parents that already carry exactly the right tag aren't saved at all. If a
+ * chunk's transaction fails, its parents are retried one at a time so one
+ * bad item can't cost the rest their tags.
  */
 export async function applyStatusTagsToParents(
   results: Array<{ item: Zotero.Item; result: ConvertResult }>,
@@ -388,22 +396,50 @@ export async function applyStatusTagsToParents(
     perParent.set(parentID as number, s);
   }
 
+  const updates: Array<{ parent: Zotero.Item; tag: string }> = [];
   for (const [parentID, s] of perParent) {
     if (s.ok === 0 && s.error === 0) continue; // all-skipped — leave existing tag
     const tag =
       s.error === 0 ? TAG_DONE : s.ok === 0 ? TAG_ERROR : TAG_INCOMPLETE;
+    const parent = Zotero.Items.get(parentID);
+    if (!parent) continue;
+    const current = ALL_STATUS_TAGS.filter((t) => parent.hasTag(t));
+    if (current.length === 1 && current[0] === tag) continue; // already right
+    updates.push({ parent, tag });
+  }
+
+  const retag = ({ parent, tag }: { parent: Zotero.Item; tag: string }) => {
+    for (const t of ALL_STATUS_TAGS) parent.removeTag(t);
+    parent.addTag(tag, 0);
+  };
+
+  for (let i = 0; i < updates.length; i += STATUS_TAG_CHUNK) {
+    const chunk = updates.slice(i, i + STATUS_TAG_CHUNK);
     try {
-      const parent = Zotero.Items.get(parentID);
-      if (!parent) continue;
-      await withDbLock(async () => {
-        for (const t of ALL_STATUS_TAGS) parent.removeTag(t);
-        parent.addTag(tag, 0);
-        await parent.saveTx();
-      });
+      await withDbLock(() =>
+        Zotero.DB.executeTransaction(async () => {
+          for (const u of chunk) {
+            retag(u);
+            await u.parent.save();
+          }
+        }),
+      );
     } catch (e) {
       Zotero.debug(
-        `${LOG} applyStatusTags parent=${parentID} failed (non-fatal): ${(e as Error).message}`,
+        `${LOG} applyStatusTags chunk failed, retrying one by one: ${(e as Error).message}`,
       );
+      for (const u of chunk) {
+        try {
+          await withDbLock(async () => {
+            retag(u);
+            await u.parent.saveTx();
+          });
+        } catch (err) {
+          Zotero.debug(
+            `${LOG} applyStatusTags parent=${u.parent.id} failed (non-fatal): ${(err as Error).message}`,
+          );
+        }
+      }
     }
   }
 }
