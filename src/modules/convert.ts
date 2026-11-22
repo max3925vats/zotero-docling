@@ -20,6 +20,7 @@ import {
   stripExistingFrontmatter,
 } from "../utils/frontmatter";
 import { withDbLock } from "../utils/dbLock";
+import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { enrichServerError } from "../utils/serverErrorHints";
 import { toast } from "./ui";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
@@ -188,6 +189,24 @@ export type ConvertResult =
  * different layers, so both stay.
  */
 const inFlightItems = new Set<number>();
+
+/**
+ * The upload for one conversion. The transport clears `form` once the PDF
+ * has been sent, so a conversion waiting on docling-serve doesn't keep its
+ * PDF in memory for the minutes or hours the server takes.
+ */
+interface UploadPayload {
+  form: FormData | null;
+}
+
+/**
+ * PDFs uploaded to the async endpoint at once, across all batches. In async
+ * mode a batch keeps more conversions in flight than the server runs (see
+ * effectiveConcurrency), so uploads are capped separately to keep them from
+ * competing for bandwidth.
+ */
+const MAX_PARALLEL_UPLOADS = 2;
+const uploadLimiter = new ConcurrencyLimiter(MAX_PARALLEL_UPLOADS);
 
 /** docling-serve response envelope (subset we read). */
 interface ConvertResponse {
@@ -532,7 +551,7 @@ async function parseConvertResponse(r: Response): Promise<FetchOutcome> {
 /** Sync transport: POST + immediate response. */
 async function fetchConvertResultSync(
   serverUrl: string,
-  form: FormData,
+  payload: UploadPayload,
   api: ReturnType<typeof getWebApis>,
   cancel?: CancelToken,
 ): Promise<FetchOutcome> {
@@ -542,7 +561,7 @@ async function fetchConvertResultSync(
       async (signal) => {
         const response = await api.fetch(`${serverUrl}/v1/convert/file`, {
           method: "POST",
-          body: form,
+          body: payload.form,
           headers: buildAuthHeader(),
           signal,
         });
@@ -579,7 +598,7 @@ export function pollAfterMs(lastGapMs: number, pollMs: number): number {
  */
 async function fetchConvertResultAsync(
   serverUrl: string,
-  form: FormData,
+  payload: UploadPayload,
   api: ReturnType<typeof getWebApis>,
   cancel?: CancelToken,
 ): Promise<FetchOutcome> {
@@ -592,36 +611,41 @@ async function fetchConvertResultAsync(
   // pref UI also clamps these.
   const maxWaitMs = asyncMaxWaitMs(getPref("asyncMaxWaitMin"));
 
-  // 1. Submit
+  // 1. Submit (at most MAX_PARALLEL_UPLOADS at once; the upload timeout
+  // starts once this upload's turn comes)
   const authHeaders = buildAuthHeader();
   let submitBody: TaskStatusResponse;
   try {
-    const submitted = await withRequestTimeout(
-      timeoutMs("asyncUploadTimeoutMin", 5),
-      async (signal) => {
-        const r = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
-          method: "POST",
-          body: form,
-          headers: authHeaders,
-          signal,
-        });
-        if (!r.ok) {
-          // Include the server's reason (e.g. a 422 for an option set in
-          // Advanced JSON), not just the status line.
-          const outcome = await parseConvertResponse(r);
-          return { label: outcome.ok ? httpLabelOf(r) : outcome.message };
-        }
-        return {
-          body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
-        };
-      },
-      api.AbortController,
-      cancel,
+    const submitted = await uploadLimiter.run(() =>
+      withRequestTimeout(
+        timeoutMs("asyncUploadTimeoutMin", 5),
+        async (signal) => {
+          const r = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
+            method: "POST",
+            body: payload.form,
+            headers: authHeaders,
+            signal,
+          });
+          if (!r.ok) {
+            // Include the server's reason (e.g. a 422 for an option set in
+            // Advanced JSON), not just the status line.
+            const outcome = await parseConvertResponse(r);
+            return { label: outcome.ok ? httpLabelOf(r) : outcome.message };
+          }
+          return {
+            body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
+          };
+        },
+        api.AbortController,
+        cancel,
+      ),
     );
     if ("label" in submitted) {
       return { ok: false, message: `Submit ${submitted.label}` };
     }
     submitBody = submitted.body;
+    // Uploaded: let the PDF go while docling-serve works on it.
+    payload.form = null;
   } catch (e) {
     if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} async submit failed: ${(e as Error).message}`);
@@ -805,15 +829,15 @@ async function fetchConvertResultAsync(
 /** Dispatch to sync or async transport based on the useAsyncEndpoint pref. */
 async function fetchConvertResult(
   serverUrl: string,
-  form: FormData,
+  payload: UploadPayload,
   api: ReturnType<typeof getWebApis>,
   cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   const useAsync = (getPref("useAsyncEndpoint") ?? false) as boolean;
   log(`transport=${useAsync ? "async" : "sync"}`);
   return useAsync
-    ? fetchConvertResultAsync(serverUrl, form, api, cancel)
-    : fetchConvertResultSync(serverUrl, form, api, cancel);
+    ? fetchConvertResultAsync(serverUrl, payload, api, cancel)
+    : fetchConvertResultSync(serverUrl, payload, api, cancel);
 }
 
 /**
@@ -905,18 +929,7 @@ async function convertAttachmentInner(
   // their existing markdown (audit H3).
   const previousMd = force ? findMatchingMdChild(parentItemID, filename) : null;
 
-  // --- 4. Read bytes ---
-  let pdfBytes: Uint8Array;
-  try {
-    pdfBytes = await IOUtils.read(pdfPath);
-  } catch (e) {
-    return {
-      status: "error",
-      message: `Failed to read PDF: ${(e as Error).message}`,
-    };
-  }
-
-  // --- 5. Build form + POST ---
+  // --- 4. Resolve the server ---
   const normalizedUrl = normalizeServerUrl(
     (getPref("serverUrl") as string) ?? "",
   );
@@ -932,16 +945,15 @@ async function convertAttachmentInner(
     return { status: "error", message: (e as Error).message };
   }
 
-  let form: FormData;
-  try {
-    form = buildConvertForm(pdfBytes, filename, api);
-  } catch (e) {
-    return { status: "error", message: (e as Error).message };
-  }
+  // --- 5. Read bytes + build form ---
+  const read = await readPdfForm(pdfPath, filename, api);
+  if ("error" in read) return { status: "error", message: read.error };
+  const payload: UploadPayload = { form: read.form };
 
   // --- 6. Talk to docling-serve via sync or async transport ---
   log(`send ${serverUrl} file=${filename}`);
-  const outcome = await fetchConvertResult(serverUrl, form, api, cancel);
+  const outcome = await fetchConvertResult(serverUrl, payload, api, cancel);
+  payload.form = null;
   if (!outcome.ok) {
     return outcome.cancelled
       ? { status: "skipped", reason: outcome.message }
@@ -1112,6 +1124,29 @@ async function convertAttachmentInner(
         : undefined,
     warning: exportWarning,
   };
+}
+
+/**
+ * Read a PDF and build its upload form. The bytes stay local to this
+ * function: the form's Blob holds its own copy, so once the transport drops
+ * the form after uploading, nothing keeps the PDF in memory.
+ */
+async function readPdfForm(
+  pdfPath: string,
+  filename: string,
+  api: ReturnType<typeof getWebApis>,
+): Promise<{ form: FormData } | { error: string }> {
+  let pdfBytes: Uint8Array;
+  try {
+    pdfBytes = await IOUtils.read(pdfPath);
+  } catch (e) {
+    return { error: `Failed to read PDF: ${(e as Error).message}` };
+  }
+  try {
+    return { form: buildConvertForm(pdfBytes, filename, api) };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
 }
 
 /**

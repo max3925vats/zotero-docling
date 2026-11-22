@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import fc from "fast-check";
 import {
+  ASYNC_PREFETCH,
   effectiveConcurrency,
   MAX_CONCURRENCY,
   SYNC_CONCURRENCY_CAP,
@@ -12,22 +13,31 @@ import {
 
 describe("effectiveConcurrency #cold", function () {
   describe("with the async endpoint", function () {
-    it("When the pref is 6, then 6 conversions run at once", function () {
+    it("When the pref is 6, then 6 conversions plus the prefetch are kept in flight", function () {
       // Arrange
       const raw = 6;
       // Act
       const limit = effectiveConcurrency(raw, true);
       // Assert
-      expect(limit).to.equal(6);
+      expect(limit).to.equal(6 + ASYNC_PREFETCH);
     });
 
-    it("When the pref is above the maximum, then it is capped at the maximum", function () {
+    it("When the pref is above the maximum, then it is capped at the maximum plus the prefetch", function () {
       // Arrange
       const raw = 50;
       // Act
       const limit = effectiveConcurrency(raw, true);
       // Assert
-      expect(limit).to.equal(MAX_CONCURRENCY);
+      expect(limit).to.equal(MAX_CONCURRENCY + ASYNC_PREFETCH);
+    });
+
+    it("When the pref is 1, then conversions stay one at a time with no prefetch", function () {
+      // Arrange
+      const raw = 1;
+      // Act
+      const limit = effectiveConcurrency(raw, true);
+      // Assert
+      expect(limit).to.equal(1);
     });
   });
 
@@ -61,13 +71,13 @@ describe("effectiveConcurrency #cold", function () {
       expect(limits).to.deep.equal(raws.map(() => 1));
     });
 
-    it("When the pref is fractional, then it rounds down", function () {
+    it("When the pref is fractional, then it rounds down (1.7 → 1)", function () {
       // Arrange
-      const raw = 3.7;
+      const raw = 1.7;
       // Act
-      const limit = effectiveConcurrency(raw, true);
+      const limit = effectiveConcurrency(raw, false);
       // Assert
-      expect(limit).to.equal(3);
+      expect(limit).to.equal(1);
     });
   });
 
@@ -76,7 +86,9 @@ describe("effectiveConcurrency #cold", function () {
       fc.assert(
         fc.property(fc.anything(), fc.boolean(), (raw, useAsync) => {
           const limit = effectiveConcurrency(raw, useAsync);
-          const cap = useAsync ? MAX_CONCURRENCY : SYNC_CONCURRENCY_CAP;
+          const cap = useAsync
+            ? MAX_CONCURRENCY + ASYNC_PREFETCH
+            : SYNC_CONCURRENCY_CAP;
           return Number.isInteger(limit) && limit >= 1 && limit <= cap;
         }),
       );

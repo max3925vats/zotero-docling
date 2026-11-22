@@ -46,7 +46,10 @@ import {
 } from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
 import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
-import { effectiveConcurrency } from "../utils/effectiveConcurrency";
+import {
+  effectiveConcurrency,
+  requestedConcurrency,
+} from "../utils/effectiveConcurrency";
 import { truncateMiddle, formatBatchDuration } from "../utils/format";
 import { onExportMarkdownZipClick } from "./markdownZipExport";
 import { onRemoveImagesClick, resolveMdTargets } from "./removeImages";
@@ -354,8 +357,13 @@ export async function runBatch(
     const limiter = new ConcurrencyLimiter(limit);
 
     // Hide the noisy "concurrency=1" suffix when the user is on the default —
-    // only surface it when they've actually opted into parallelism.
-    const concurrencyNote = limit > 1 ? ` · concurrency=${limit}` : "";
+    // only surface it when they've actually opted into parallelism. Shows
+    // conversions at once, not the async prefetch on top.
+    const atOnce = Math.min(
+      limit,
+      requestedConcurrency(getPref("maxConcurrency")),
+    );
+    const concurrencyNote = atOnce > 1 ? ` · concurrency=${atOnce}` : "";
     startManagedProgress(
       `${opts.menuLabel}: converting…`,
       `${total} PDF${total === 1 ? "" : "s"}${concurrencyNote}`,

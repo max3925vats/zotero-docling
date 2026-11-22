@@ -14,12 +14,31 @@ export const MAX_CONCURRENCY = 8;
 export const SYNC_CONCURRENCY_CAP = 2;
 
 /**
- * Parse the maxConcurrency pref and apply the transport's ceiling. Missing,
- * non-numeric and sub-1 values mean 1 (sequential); fractions round down.
+ * Extra PDFs a parallel async batch keeps queued at docling-serve. With
+ * exactly as many PDFs in flight as the server has workers, a worker sits
+ * idle while the plugin downloads a result, attaches it and uploads the
+ * next PDF. A couple queued behind keep the workers busy. (Uploads are
+ * capped separately in convert.ts.) Not applied when the setting is 1, which
+ * means one at a time.
+ */
+export const ASYNC_PREFETCH = 2;
+
+/**
+ * The maxConcurrency pref as a number in [1, MAX_CONCURRENCY]: how many
+ * conversions the user asked docling-serve to run at once.
+ */
+export function requestedConcurrency(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? Math.min(MAX_CONCURRENCY, n) : 1;
+}
+
+/**
+ * Parse the maxConcurrency pref and apply the transport's ceiling (sync) or
+ * prefetch (async). Missing, non-numeric and sub-1 values mean 1
+ * (sequential); fractions round down.
  */
 export function effectiveConcurrency(raw: unknown, useAsync: boolean): number {
-  const n = Math.floor(Number(raw));
-  const requested =
-    Number.isFinite(n) && n >= 1 ? Math.min(MAX_CONCURRENCY, n) : 1;
-  return useAsync ? requested : Math.min(requested, SYNC_CONCURRENCY_CAP);
+  const requested = requestedConcurrency(raw);
+  if (!useAsync) return Math.min(requested, SYNC_CONCURRENCY_CAP);
+  return requested > 1 ? requested + ASYNC_PREFETCH : requested;
 }
