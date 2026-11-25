@@ -71,6 +71,15 @@ describe("effectiveConcurrency #cold", function () {
       expect(limits).to.deep.equal(raws.map(() => 1));
     });
 
+    it("When the pref can't be converted to a number at all, then 1 is used instead of throwing", function () {
+      // Arrange: fast-check found { toString: "" } (Number() throws on it).
+      const raws = [{ toString: "" }, Symbol("x")];
+      // Act
+      const limits = raws.map((r) => effectiveConcurrency(r, true));
+      // Assert
+      expect(limits).to.deep.equal([1, 1]);
+    });
+
     it("When the pref is fractional, then it rounds down (1.7 → 1)", function () {
       // Arrange
       const raw = 1.7;

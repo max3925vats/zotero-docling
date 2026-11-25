@@ -28,7 +28,14 @@ export const ASYNC_PREFETCH = 2;
  * conversions the user asked docling-serve to run at once.
  */
 export function requestedConcurrency(raw: unknown): number {
-  const n = Math.floor(Number(raw));
+  let n: number;
+  try {
+    n = Math.floor(Number(raw));
+  } catch {
+    // Number() throws for values with no usable primitive form (a Symbol,
+    // or an object whose toString/valueOf aren't functions).
+    return 1;
+  }
   return Number.isFinite(n) && n >= 1 ? Math.min(MAX_CONCURRENCY, n) : 1;
 }
 
