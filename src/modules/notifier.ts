@@ -12,15 +12,17 @@ import { getPref } from "../utils/prefs";
 import { getString } from "../utils/locale";
 import { releaseBatch, tryAcquireBatch } from "../utils/batchLock";
 import {
-  convertAttachment,
   applyStatusTagsToParents,
+  convertOrSkip,
   preflightServer,
   type ConvertResult,
 } from "./convert";
 import { toast } from "./ui";
-import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
+import { conversionQueue } from "../utils/conversionQueue";
+import { effectiveConcurrency } from "../utils/effectiveConcurrency";
 import { notifyOnBatchComplete } from "../utils/notification";
-import { formatDuration } from "../utils/format";
+import { formatBatchDuration } from "../utils/format";
+import { sortLargestFirst } from "../utils/zotero";
 
 const LOG = "[Docling/notifier]";
 const DEBOUNCE_MS = 3000;
@@ -111,11 +113,12 @@ async function processPending(): Promise<void> {
     debounceTimer = null;
     log(`processing ${ids.length} pending PDF(s)`);
 
-    // Defer to any batch that's already running (menu, Remove Images). The
-    // lock is taken here, synchronously, BEFORE the preflight await — so a
-    // menu click during preflight can't start a second batch (audit M2).
+    // Defer to Remove Images if it's running. A menu batch doesn't block
+    // us: the two share the lock and the conversion queue. The lock is taken
+    // here, synchronously, BEFORE the preflight await — so Remove Images
+    // can't start in between (audit M2).
     if (!tryAcquireBatch("auto-convert")) {
-      log("a batch is already running — re-queueing for next debounce tick");
+      log("Remove Images is running — re-queueing for next debounce tick");
       // Put the IDs back so we'll process them after the current batch ends.
       for (const id of ids) pendingIDs.add(id);
       // Toast ONCE per deferral cycle so the user knows auto-convert is
@@ -149,6 +152,8 @@ async function processPending(): Promise<void> {
     const warnings: string[] = [];
     const batchResults: Array<{ item: Zotero.Item; result: ConvertResult }> =
       [];
+    let limit = 1;
+    let startedAt = 0;
 
     try {
       // Pre-flight: if docling-serve is down, skip the whole batch with one
@@ -187,21 +192,24 @@ async function processPending(): Promise<void> {
       }
       preflightFailures = 0;
 
-      const limit = Math.max(
-        1,
-        Math.min(8, Number(getPref("maxConcurrency") ?? 1) || 1),
+      limit = effectiveConcurrency(
+        getPref("maxConcurrency"),
+        (getPref("useAsyncEndpoint") ?? false) as boolean,
       );
-      const limiter = new ConcurrencyLimiter(limit);
+      // Shared with menu batches (see conversionQueue).
+      conversionQueue.setLimit(limit);
 
-      const runOne = async (id: number): Promise<void> => {
-        const item = Zotero.Items.get(id);
-        if (!item) return;
+      // In parallel, start the biggest PDFs first (see sortLargestFirst).
+      const found = ids
+        .map((id) => Zotero.Items.get(id))
+        .filter((item): item is Zotero.Item => !!item);
+      const items = limit > 1 ? await sortLargestFirst(found) : found;
+
+      const runOne = async (item: Zotero.Item): Promise<void> => {
+        const id = item.id;
         let result: ConvertResult;
         try {
-          // Stop sending new PDFs once shutdown has begun (audit M7).
-          result = addon.data.alive
-            ? await convertAttachment(item)
-            : { status: "skipped", reason: "Plugin is shutting down" };
+          result = await convertOrSkip(item, "auto-convert");
         } catch (e) {
           result = { status: "error", message: (e as Error).message };
           log(`auto-convert threw for item ${id}: ${(e as Error).message}`);
@@ -221,21 +229,33 @@ async function processPending(): Promise<void> {
       };
 
       // allSettled: hold the lock until every item has finished (audit M3).
-      await Promise.allSettled(ids.map((id) => limiter.run(() => runOne(id))));
-      await applyStatusTagsToParents(batchResults);
+      startedAt = Date.now();
+      await Promise.allSettled(
+        items.map((item) => conversionQueue.run(() => runOne(item))),
+      );
+      // No DB writes from a plugin that's being unloaded.
+      if (addon.data.alive) await applyStatusTagsToParents(batchResults);
     } finally {
-      releaseBatch();
+      releaseBatch("auto-convert");
     }
     if (ok + failed + skipped === 0) return;
 
     // Always toast — silent skips left users wondering why nothing happened
     // for standalone PDFs (no parent → skipped).
-    const totalSec = batchResults.reduce((acc, { result }) => {
+    // Elapsed time, plus the server's summed processing_time when parallel
+    // (see formatBatchDuration).
+    const serverSec = batchResults.reduce((acc, { result }) => {
       if (result.status !== "ok") return acc;
       return acc + (result.processingTimeSec ?? 0);
     }, 0);
     const durationSuffix =
-      ok > 0 && totalSec > 0 ? ` — took ${formatDuration(totalSec)}` : "";
+      ok > 0
+        ? formatBatchDuration(
+            (Date.now() - startedAt) / 1000,
+            serverSec,
+            limit > 1,
+          )
+        : "";
     const summary = `OK ${ok} · skipped ${skipped} · failed ${failed}${durationSuffix}`;
     const detail =
       failMessages.length > 0

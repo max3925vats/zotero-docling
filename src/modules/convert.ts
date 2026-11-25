@@ -9,8 +9,7 @@
 import { getPref, setPref } from "../utils/prefs";
 import {
   hasMarkdownChild,
-  getLocalFilePath,
-  isConvertiblePdf,
+  convertiblePdfPath,
   mdNameForPdf,
   findMatchingMdChild,
   trashItem,
@@ -20,9 +19,13 @@ import {
   stripExistingFrontmatter,
 } from "../utils/frontmatter";
 import { withDbLock } from "../utils/dbLock";
+import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 import { enrichServerError } from "../utils/serverErrorHints";
 import { toast } from "./ui";
 import { RequestTimeoutError, withRequestTimeout } from "../utils/timeout";
+import { CancelledError, sleep, type CancelToken } from "../utils/cancel";
+import { batchAbortToken, isStopRequested } from "../utils/batchLock";
+import { getString } from "../utils/locale";
 
 const LOG = "[zotero-docling]";
 
@@ -186,6 +189,24 @@ export type ConvertResult =
  */
 const inFlightItems = new Set<number>();
 
+/**
+ * The upload for one conversion. The transport clears `form` once the PDF
+ * has been sent, so a conversion waiting on docling-serve doesn't keep its
+ * PDF in memory for the minutes or hours the server takes.
+ */
+interface UploadPayload {
+  form: FormData | null;
+}
+
+/**
+ * PDFs uploaded to the async endpoint at once, across all batches. In async
+ * mode a batch keeps more conversions in flight than the server runs (see
+ * effectiveConcurrency), so uploads are capped separately to keep them from
+ * competing for bandwidth.
+ */
+const MAX_PARALLEL_UPLOADS = 2;
+const uploadLimiter = new ConcurrencyLimiter(MAX_PARALLEL_UPLOADS);
+
 /** docling-serve response envelope (subset we read). */
 interface ConvertResponse {
   /** FastAPI request errors (e.g. 422): a message or a list of {msg};
@@ -333,6 +354,8 @@ const TAG_DONE = "docling/done";
 const TAG_INCOMPLETE = "docling/incomplete";
 const TAG_ERROR = "docling/error";
 const ALL_STATUS_TAGS = [TAG_DONE, TAG_INCOMPLETE, TAG_ERROR];
+/** Parents saved per status-tag transaction. */
+const STATUS_TAG_CHUNK = 50;
 
 /**
  * Aggregate a batch of (item, result) pairs by parent item and apply exactly
@@ -345,6 +368,12 @@ const ALL_STATUS_TAGS = [TAG_DONE, TAG_INCOMPLETE, TAG_ERROR];
  *   - some OK + some errors     → docling/incomplete
  *   - all errors (no OK)        → docling/error
  *   - all skipped               → no change
+ *
+ * Parents are saved in one transaction per STATUS_TAG_CHUNK rather than one
+ * each, so a large batch doesn't end with hundreds of transactions in a row.
+ * Parents that already carry exactly the right tag aren't saved at all. If a
+ * chunk's transaction fails, its parents are retried one at a time so one
+ * bad item can't cost the rest their tags.
  */
 export async function applyStatusTagsToParents(
   results: Array<{ item: Zotero.Item; result: ConvertResult }>,
@@ -366,22 +395,50 @@ export async function applyStatusTagsToParents(
     perParent.set(parentID as number, s);
   }
 
+  const updates: Array<{ parent: Zotero.Item; tag: string }> = [];
   for (const [parentID, s] of perParent) {
     if (s.ok === 0 && s.error === 0) continue; // all-skipped — leave existing tag
     const tag =
       s.error === 0 ? TAG_DONE : s.ok === 0 ? TAG_ERROR : TAG_INCOMPLETE;
+    const parent = Zotero.Items.get(parentID);
+    if (!parent) continue;
+    const current = ALL_STATUS_TAGS.filter((t) => parent.hasTag(t));
+    if (current.length === 1 && current[0] === tag) continue; // already right
+    updates.push({ parent, tag });
+  }
+
+  const retag = ({ parent, tag }: { parent: Zotero.Item; tag: string }) => {
+    for (const t of ALL_STATUS_TAGS) parent.removeTag(t);
+    parent.addTag(tag, 0);
+  };
+
+  for (let i = 0; i < updates.length; i += STATUS_TAG_CHUNK) {
+    const chunk = updates.slice(i, i + STATUS_TAG_CHUNK);
     try {
-      const parent = Zotero.Items.get(parentID);
-      if (!parent) continue;
-      await withDbLock(async () => {
-        for (const t of ALL_STATUS_TAGS) parent.removeTag(t);
-        parent.addTag(tag, 0);
-        await parent.saveTx();
-      });
+      await withDbLock(() =>
+        Zotero.DB.executeTransaction(async () => {
+          for (const u of chunk) {
+            retag(u);
+            await u.parent.save();
+          }
+        }),
+      );
     } catch (e) {
       Zotero.debug(
-        `${LOG} applyStatusTags parent=${parentID} failed (non-fatal): ${(e as Error).message}`,
+        `${LOG} applyStatusTags chunk failed, retrying one by one: ${(e as Error).message}`,
       );
+      for (const u of chunk) {
+        try {
+          await withDbLock(async () => {
+            retag(u);
+            await u.parent.saveTx();
+          });
+        } catch (err) {
+          Zotero.debug(
+            `${LOG} applyStatusTags parent=${u.parent.id} failed (non-fatal): ${(err as Error).message}`,
+          );
+        }
+      }
     }
   }
 }
@@ -412,7 +469,13 @@ function formatServerErrors(data: ConvertResponse): string {
 // ---------------------------------------------------------------------------
 
 type FetchOutcome =
-  { ok: true; data: ConvertResponse } | { ok: false; message: string };
+  | { ok: true; data: ConvertResponse }
+  | { ok: false; message: string; cancelled?: true };
+
+/** Outcome for a request cut short by the batch's abort token. */
+function cancelledOutcome(e: CancelledError): FetchOutcome {
+  return { ok: false, message: e.message, cancelled: true };
+}
 
 interface TaskStatusResponse {
   task_id?: string;
@@ -523,8 +586,9 @@ async function parseConvertResponse(r: Response): Promise<FetchOutcome> {
 /** Sync transport: POST + immediate response. */
 async function fetchConvertResultSync(
   serverUrl: string,
-  form: FormData,
+  payload: UploadPayload,
   api: ReturnType<typeof getWebApis>,
+  cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   try {
     return await withRequestTimeout(
@@ -532,15 +596,17 @@ async function fetchConvertResultSync(
       async (signal) => {
         const response = await api.fetch(`${serverUrl}/v1/convert/file`, {
           method: "POST",
-          body: form,
+          body: payload.form,
           headers: buildAuthHeader(),
           signal,
         });
         return parseConvertResponse(response);
       },
       api.AbortController,
+      cancel,
     );
   } catch (e) {
+    if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} sync fetch failed: ${(e as Error).message}`);
     return {
       ok: false,
@@ -553,9 +619,12 @@ async function fetchConvertResultSync(
   }
 }
 
-/** Plain sleep — no abort plumbing (see file header note on cancel). */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * The gap before the next async status check: double the last one, up to
+ * the configured poll interval. Exported for tests.
+ */
+export function pollAfterMs(lastGapMs: number, pollMs: number): number {
+  return Math.min(pollMs, Math.max(1, lastGapMs) * 2);
 }
 
 /**
@@ -564,8 +633,9 @@ function sleep(ms: number): Promise<void> {
  */
 async function fetchConvertResultAsync(
   serverUrl: string,
-  form: FormData,
+  payload: UploadPayload,
   api: ReturnType<typeof getWebApis>,
+  cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   const pollSec = Math.max(
     1,
@@ -576,36 +646,43 @@ async function fetchConvertResultAsync(
   // pref UI also clamps these.
   const maxWaitMs = asyncMaxWaitMs(getPref("asyncMaxWaitMin"));
 
-  // 1. Submit
+  // 1. Submit (at most MAX_PARALLEL_UPLOADS at once; the upload timeout
+  // starts once this upload's turn comes)
   const authHeaders = buildAuthHeader();
   let submitBody: TaskStatusResponse;
   try {
-    const submitted = await withRequestTimeout(
-      timeoutMs("asyncUploadTimeoutMin", 5),
-      async (signal) => {
-        const r = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
-          method: "POST",
-          body: form,
-          headers: authHeaders,
-          signal,
-        });
-        if (!r.ok) {
-          // Include the server's reason (e.g. a 422 for an option set in
-          // Advanced JSON), not just the status line.
-          const outcome = await parseConvertResponse(r);
-          return { label: outcome.ok ? httpLabelOf(r) : outcome.message };
-        }
-        return {
-          body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
-        };
-      },
-      api.AbortController,
+    const submitted = await uploadLimiter.run(() =>
+      withRequestTimeout(
+        timeoutMs("asyncUploadTimeoutMin", 5),
+        async (signal) => {
+          const r = await api.fetch(`${serverUrl}/v1/convert/file/async`, {
+            method: "POST",
+            body: payload.form,
+            headers: authHeaders,
+            signal,
+          });
+          if (!r.ok) {
+            // Include the server's reason (e.g. a 422 for an option set in
+            // Advanced JSON), not just the status line.
+            const outcome = await parseConvertResponse(r);
+            return { label: outcome.ok ? httpLabelOf(r) : outcome.message };
+          }
+          return {
+            body: (await r.json().catch(() => ({}))) as TaskStatusResponse,
+          };
+        },
+        api.AbortController,
+        cancel,
+      ),
     );
     if ("label" in submitted) {
       return { ok: false, message: `Submit ${submitted.label}` };
     }
     submitBody = submitted.body;
+    // Uploaded: let the PDF go while docling-serve works on it.
+    payload.form = null;
   } catch (e) {
+    if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} async submit failed: ${(e as Error).message}`);
     return {
       ok: false,
@@ -629,11 +706,28 @@ async function fetchConvertResultAsync(
   //   (b) `consecutiveFailures` escalates: a Zotero.debug warning at 3
   //       failures, and a single toast at 10. Gives users a fast feedback
   //       loop when docling-serve dies mid-task, instead of appearing hung.
+  //
+  // Checks start 1 s after submit and the gap doubles up to the configured
+  // interval (see pollAfterMs), so a short PDF is picked up within about a
+  // second of finishing instead of a full interval later. Each check also
+  // asks the server to hold the request until the task finishes (`wait`);
+  // docling-serve's Ray engine does, its local and RQ engines answer at
+  // once, and then we sleep out the rest of the gap as before.
   const startedAt = Date.now();
+  const pollMs = pollSec * 1000;
+  let gapMs = Math.min(1000, pollMs);
+  let delayMs = gapMs;
   let consecutiveFailures = 0;
   let unresponsiveToastShown = false;
   while (true) {
-    await sleep(pollSec * 1000);
+    // The batch's abort token cuts the sleep short on shutdown, so this
+    // loop never outlives the plugin. The server task keeps running.
+    try {
+      if (delayMs > 0) await sleep(delayMs, cancel);
+    } catch (e) {
+      if (e instanceof CancelledError) return cancelledOutcome(e);
+      throw e;
+    }
 
     if (Date.now() - startedAt > maxWaitMs) {
       return {
@@ -642,16 +736,22 @@ async function fetchConvertResultAsync(
       };
     }
 
+    // The next check comes one (longer) gap after this one. A held request
+    // (long-poll) shortens the sleep below.
+    gapMs = pollAfterMs(gapMs, pollMs);
+    delayMs = gapMs;
+    const askedAt = Date.now();
     let poll:
       { ok: false; label: string } | { ok: true; status: TaskStatusResponse };
     try {
       poll = await withRequestTimeout(
-        timeoutMs("pollTimeoutSec", 30),
+        // The server may hold the request for up to `wait` seconds.
+        timeoutMs("pollTimeoutSec", 30) + pollMs,
         async (signal) => {
-          const r = await api.fetch(`${serverUrl}/v1/status/poll/${taskId}`, {
-            headers: authHeaders,
-            signal,
-          });
+          const r = await api.fetch(
+            `${serverUrl}/v1/status/poll/${taskId}?wait=${pollSec}`,
+            { headers: authHeaders, signal },
+          );
           if (!r.ok) {
             // 5xx/429 from a proxy or a busy server are usually transient:
             // throw so the catch below counts a failed poll and keeps going
@@ -677,9 +777,11 @@ async function fetchConvertResultAsync(
           return { ok: true as const, status: parsed as TaskStatusResponse };
         },
         api.AbortController,
+        cancel,
       );
       consecutiveFailures = 0;
     } catch (e) {
+      if (e instanceof CancelledError) return cancelledOutcome(e);
       // A poll that times out counts as one failed poll, like a network blip.
       consecutiveFailures++;
       Zotero.debug(
@@ -723,7 +825,9 @@ async function fetchConvertResultAsync(
     if (s === "skipped") {
       return { ok: false, message: "Async task skipped by server" };
     }
-    // pending / started / undefined → keep polling
+    // pending / started / undefined → keep polling. If the server held the
+    // request (long-poll), only sleep out what's left of the gap.
+    delayMs = Math.max(0, delayMs - (Date.now() - askedAt));
   }
 
   // 3. Fetch result
@@ -738,8 +842,10 @@ async function fetchConvertResultAsync(
         return parseConvertResponse(r);
       },
       api.AbortController,
+      cancel,
     );
   } catch (e) {
+    if (e instanceof CancelledError) return cancelledOutcome(e);
     Zotero.debug(`${LOG} async result fetch failed: ${(e as Error).message}`);
     return {
       ok: false,
@@ -758,14 +864,15 @@ async function fetchConvertResultAsync(
 /** Dispatch to sync or async transport based on the useAsyncEndpoint pref. */
 async function fetchConvertResult(
   serverUrl: string,
-  form: FormData,
+  payload: UploadPayload,
   api: ReturnType<typeof getWebApis>,
+  cancel?: CancelToken,
 ): Promise<FetchOutcome> {
   const useAsync = (getPref("useAsyncEndpoint") ?? false) as boolean;
   log(`transport=${useAsync ? "async" : "sync"}`);
   return useAsync
-    ? fetchConvertResultAsync(serverUrl, form, api)
-    : fetchConvertResultSync(serverUrl, form, api);
+    ? fetchConvertResultAsync(serverUrl, payload, api, cancel)
+    : fetchConvertResultSync(serverUrl, payload, api, cancel);
 }
 
 /**
@@ -773,10 +880,13 @@ async function fetchConvertResult(
  * Caller is responsible for any UI feedback AND for applying status tags
  * (call `applyStatusTagsToParents` after a batch) — this function only
  * returns the per-attachment result.
+ *
+ * `cancel` (the batch's abort token) stops the client-side wait and skips
+ * every write to Zotero; the result is then "skipped" with its reason.
  */
 export async function convertAttachment(
   item: Zotero.Item,
-  options?: { force?: boolean },
+  options?: { force?: boolean; cancel?: CancelToken },
 ): Promise<ConvertResult> {
   // Dedupe: if a conversion for this exact attachment is already running
   // somewhere, skip the duplicate rather than queueing a second one.
@@ -791,26 +901,46 @@ export async function convertAttachment(
   }
 }
 
+/**
+ * Convert one PDF of `owner`'s running batch, or skip it if that batch was
+ * told to stop before this PDF started. Shared by the menu and auto-convert
+ * batches.
+ */
+export async function convertOrSkip(
+  item: Zotero.Item,
+  owner: "menu" | "auto-convert",
+  force = false,
+): Promise<ConvertResult> {
+  // Stop sending new PDFs once shutdown has begun (audit M7).
+  if (!addon.data.alive) {
+    return { status: "skipped", reason: "Plugin is shutting down" };
+  }
+  if (isStopRequested(owner)) {
+    return { status: "skipped", reason: getString("batch-stopped-reason") };
+  }
+  return convertAttachment(item, { force, cancel: batchAbortToken() });
+}
+
 async function convertAttachmentInner(
   item: Zotero.Item,
-  options?: { force?: boolean },
+  options?: { force?: boolean; cancel?: CancelToken },
 ): Promise<ConvertResult> {
   const force = options?.force ?? false;
+  const cancel = options?.cancel;
+  if (cancel?.cancelled) {
+    return { status: "skipped", reason: cancel.reason ?? "Cancelled" };
+  }
 
-  // --- 1. Guard checks ---
-  if (!(await isConvertiblePdf(item))) {
+  // --- 1–2. Guard checks + local file (needed early for the filename-aware
+  // skip), with one existence check ---
+  const pdfPath = await convertiblePdfPath(item);
+  if (!pdfPath) {
     return {
       status: "skipped",
       reason: "Not a locally-stored PDF attachment with a parent item",
     };
   }
   const parentItemID = item.parentItemID as number;
-
-  // --- 2. Resolve local file (needed early for the filename-aware skip) ---
-  const pdfPath = await getLocalFilePath(item);
-  if (!pdfPath) {
-    return { status: "error", message: "PDF file not available locally" };
-  }
   const filename = PathUtils.filename(pdfPath);
 
   // --- 3. Skip-if-exists ---
@@ -832,18 +962,7 @@ async function convertAttachmentInner(
   // their existing markdown (audit H3).
   const previousMd = force ? findMatchingMdChild(parentItemID, filename) : null;
 
-  // --- 4. Read bytes ---
-  let pdfBytes: Uint8Array;
-  try {
-    pdfBytes = await IOUtils.read(pdfPath);
-  } catch (e) {
-    return {
-      status: "error",
-      message: `Failed to read PDF: ${(e as Error).message}`,
-    };
-  }
-
-  // --- 5. Build form + POST ---
+  // --- 4. Resolve the server ---
   const normalizedUrl = normalizeServerUrl(
     (getPref("serverUrl") as string) ?? "",
   );
@@ -859,18 +978,23 @@ async function convertAttachmentInner(
     return { status: "error", message: (e as Error).message };
   }
 
-  let form: FormData;
-  try {
-    form = buildConvertForm(pdfBytes, filename, api);
-  } catch (e) {
-    return { status: "error", message: (e as Error).message };
-  }
+  // --- 5. Read bytes + build form ---
+  const read = await readPdfForm(pdfPath, filename, api);
+  if ("error" in read) return { status: "error", message: read.error };
+  const payload: UploadPayload = { form: read.form };
 
   // --- 6. Talk to docling-serve via sync or async transport ---
   log(`send ${serverUrl} file=${filename}`);
-  const outcome = await fetchConvertResult(serverUrl, form, api);
+  const outcome = await fetchConvertResult(serverUrl, payload, api, cancel);
+  payload.form = null;
   if (!outcome.ok) {
-    return { status: "error", message: outcome.message };
+    return outcome.cancelled
+      ? { status: "skipped", reason: outcome.message }
+      : { status: "error", message: outcome.message };
+  }
+  // Aborted after the result arrived: write nothing to Zotero.
+  if (cancel?.cancelled) {
+    return { status: "skipped", reason: cancel.reason ?? "Cancelled" };
   }
   const data = outcome.data;
 
@@ -934,9 +1058,10 @@ async function convertAttachmentInner(
   }
 
   // --- 10. Import as a Zotero attachment (if enabled) ---
-  // Both the import and the follow-up setField/saveTx go through the global
-  // DB lock — parallel batches (maxConcurrency > 1) otherwise race on
-  // SQLite transactions and intermittently fail.
+  // The import goes through the global DB lock — parallel batches
+  // (maxConcurrency > 1) otherwise race on SQLite transactions and
+  // intermittently fail. The title is set by importFromFile in the same
+  // transaction, rather than by a second save afterwards.
   let attachmentID: number | undefined;
   if (attachToItem) {
     let newAttachment: Zotero.Item;
@@ -946,6 +1071,7 @@ async function convertAttachmentInner(
           file: tmpPath,
           parentItemID,
           contentType: "text/markdown",
+          title: mdName,
         }),
       );
     } catch (e) {
@@ -954,16 +1080,6 @@ async function convertAttachmentInner(
         status: "error",
         message: `Failed to import attachment: ${(e as Error).message}`,
       };
-    }
-    try {
-      await withDbLock(async () => {
-        newAttachment.setField("title", mdName);
-        await newAttachment.saveTx();
-      });
-    } catch (e) {
-      Zotero.debug(
-        `${LOG} title set failed (non-fatal): ${(e as Error).message}`,
-      );
     }
     attachmentID = newAttachment.id;
 
@@ -983,15 +1099,28 @@ async function convertAttachmentInner(
   // Naming: citationKey when set on the parent (BBT), else parent's Zotero key.
   // Two PDFs under one parent will produce the same export filename — last
   // write wins. Documented in the README.
+  //
+  // Written to a per-item temp file and moved into place, so the export is
+  // always one complete conversion. With Parallel conversions > 1, two PDFs
+  // under one parent write this path at the same time; a direct write could
+  // interleave them, and a folder watcher (Obsidian, an indexer) could read
+  // a half-written file.
   let exportWarning: string | undefined;
   if (exportFolder) {
+    let exportTmpPath: string | undefined;
     try {
       await IOUtils.makeDirectory(exportFolder, { ignoreExisting: true });
       const exportName = `${exportBaseName(parentItem)}.md`;
       const exportPath = PathUtils.join(exportFolder, exportName);
-      await IOUtils.writeUTF8(exportPath, markdown);
+      exportTmpPath = `${exportPath}.${item.key}.tmp`;
+      await IOUtils.writeUTF8(exportPath, markdown, { tmpPath: exportTmpPath });
       log(`exported ${exportPath}`);
     } catch (e) {
+      if (exportTmpPath) {
+        await IOUtils.remove(exportTmpPath, { ignoreAbsent: true }).catch(
+          () => {},
+        );
+      }
       const message = `Failed to write to export folder: ${(e as Error).message}`;
       Zotero.debug(`${LOG} ${message}`);
       // If the export folder was the only output, the conversion produced
@@ -1020,6 +1149,29 @@ async function convertAttachmentInner(
         : undefined,
     warning: exportWarning,
   };
+}
+
+/**
+ * Read a PDF and build its upload form. The bytes stay local to this
+ * function: the form's Blob holds its own copy, so once the transport drops
+ * the form after uploading, nothing keeps the PDF in memory.
+ */
+async function readPdfForm(
+  pdfPath: string,
+  filename: string,
+  api: ReturnType<typeof getWebApis>,
+): Promise<{ form: FormData } | { error: string }> {
+  let pdfBytes: Uint8Array;
+  try {
+    pdfBytes = await IOUtils.read(pdfPath);
+  } catch (e) {
+    return { error: `Failed to read PDF: ${(e as Error).message}` };
+  }
+  try {
+    return { form: buildConvertForm(pdfBytes, filename, api) };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
 }
 
 /**

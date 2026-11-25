@@ -23,6 +23,30 @@ export function formatDuration(totalSec: number | undefined): string {
 }
 
 /**
+ * The " — took …" suffix for a batch summary.
+ *
+ * `elapsedSec` is how long the user waited; `serverSec` is the sum of
+ * docling-serve's per-PDF processing_time. With parallel conversions the
+ * two differ (the server's total can exceed the wait), and only the elapsed
+ * time shows whether a higher setting helped, so both are shown then.
+ * Empty when nothing converted.
+ *
+ *   (250, 930, true)  → " — took 4m 10s (server time 15m 30s)"
+ *   (250, 240, false) → " — took 4m 10s"
+ */
+export function formatBatchDuration(
+  elapsedSec: number,
+  serverSec: number,
+  parallel: boolean,
+): string {
+  if (!(elapsedSec > 0)) return "";
+  const took = ` — took ${formatDuration(elapsedSec)}`;
+  return parallel && serverSec > 0
+    ? `${took} (server time ${formatDuration(serverSec)})`
+    : took;
+}
+
+/**
  * Truncate a string to at most `max` characters. If shortened, replaces the
  * middle with an ellipsis so both the start and the extension survive — useful
  * for PDF filenames like

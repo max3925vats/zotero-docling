@@ -19,8 +19,13 @@ import { toast } from "./ui";
 import { runBatch, resolvePdfsToConvert, getSelectedItems } from "./menu";
 import { getString } from "../utils/locale";
 import { findMatchingMdChild, getLocalFilePath } from "../utils/zotero";
+import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 
 const LOG = "[Docling/zip]";
+
+// Markdown files read at once while building the zip. IOUtils reads off the
+// main thread, so a few at a time overlap.
+const READ_CONCURRENCY = 4;
 
 function log(...args: unknown[]): void {
   try {
@@ -107,7 +112,7 @@ export function todayIsoDate(now: Date = new Date()): string {
  * from, and (when present) the existing markdown child. `mdChild` is null
  * when no conversion has happened yet — handled by the missing-md dialog.
  */
-interface ZipRow {
+export interface ZipRow {
   parent: Zotero.Item;
   pdf: Zotero.Item;
   mdChild: Zotero.Item | null;
@@ -265,46 +270,73 @@ export async function readMarkdownForZip(path: string): Promise<string> {
   return IOUtils.readUTF8(path);
 }
 
-async function buildZip(rows: ZipRow[]): Promise<BuildResult> {
-  const zip = new JSZip();
+/**
+ * Read one row's markdown for the zip: the text, null when the row has no
+ * markdown yet ("skipped"), or undefined when the file can't be read.
+ */
+async function readRow(row: ZipRow): Promise<string | null | undefined> {
+  if (!row.mdChild) return null;
+  const path = await getLocalFilePath(row.mdChild);
+  if (!path) {
+    log(`mdChild ${row.mdChild.id} has no local file (cloud-only?) — skipping`);
+    return undefined;
+  }
+  try {
+    return await readMarkdownForZip(path);
+  } catch (e) {
+    log(`failed to read md ${path}: ${(e as Error).message}`);
+    return undefined;
+  }
+}
+
+/** Zip entries (name → markdown) plus the counts for the summary toast. */
+export interface ZipEntries {
+  entries: Array<{ name: string; text: string }>;
+  skipped: number;
+  failedReads: number;
+}
+
+/**
+ * Read every row's markdown and pick its entry name. Files are read in
+ * parallel, then named in row order, so the .1/.2 suffixes come out the same
+ * as reading one at a time (an unreadable row claims no name). Exported for
+ * tests.
+ */
+export async function collectZipEntries(rows: ZipRow[]): Promise<ZipEntries> {
+  const limiter = new ConcurrencyLimiter(READ_CONCURRENCY);
+  const texts = await Promise.all(
+    rows.map((row) => limiter.run(() => readRow(row))),
+  );
+
   const taken = new Set<string>();
-  let exported = 0;
+  const entries: ZipEntries["entries"] = [];
   let skipped = 0;
   let failedReads = 0;
-
-  for (const row of rows) {
-    if (!row.mdChild) {
+  for (const [i, row] of rows.entries()) {
+    const text = texts[i];
+    if (text === null) {
       skipped++;
       continue;
     }
-    const path = await getLocalFilePath(row.mdChild);
-    if (!path) {
-      log(
-        `mdChild ${row.mdChild.id} has no local file (cloud-only?) — skipping`,
-      );
+    if (text === undefined) {
       failedReads++;
       continue;
     }
-    let text: string;
-    try {
-      text = await readMarkdownForZip(path);
-    } catch (e) {
-      log(`failed to read md ${path}: ${(e as Error).message}`);
-      failedReads++;
-      continue;
-    }
-    const base = zipBaseName(row.parent);
-    const entryName = zipUniqueName(base, taken);
-    zip.file(entryName, text);
-    exported++;
+    entries.push({ name: zipUniqueName(zipBaseName(row.parent), taken), text });
   }
+  return { entries, skipped, failedReads };
+}
 
+async function buildZip(rows: ZipRow[]): Promise<BuildResult> {
+  const { entries, skipped, failedReads } = await collectZipEntries(rows);
+  const zip = new JSZip();
+  for (const { name, text } of entries) zip.file(name, text);
   const zipBytes = await zip.generateAsync({
     type: "uint8array",
     compression: "DEFLATE",
     compressionOptions: { level: 6 },
   });
-  return { zipBytes, exported, skipped, failedReads };
+  return { zipBytes, exported: entries.length, skipped, failedReads };
 }
 
 // ---------------------------------------------------------------------------

@@ -7,12 +7,25 @@
 //   const results = await Promise.all(items.map((i) => limiter.run(() => doWork(i))));
 
 export class ConcurrencyLimiter {
-  private readonly limit: number;
+  private limit: number;
   private active = 0;
   private readonly queue: Array<() => void> = [];
 
   constructor(limit: number) {
     this.limit = Math.max(1, Math.floor(limit));
+  }
+
+  /**
+   * Change the limit. Raising it starts waiting tasks straight away;
+   * lowering it lets running tasks finish and starts no more until the
+   * count is under the new limit.
+   */
+  setLimit(limit: number): void {
+    this.limit = Math.max(1, Math.floor(limit));
+    while (this.active < this.limit && this.queue.length > 0) {
+      this.active++;
+      this.queue.shift()!();
+    }
   }
 
   /** Run `task` when a slot is free; resolves with the task's result. */
@@ -26,10 +39,12 @@ export class ConcurrencyLimiter {
     try {
       return await task();
     } finally {
-      const next = this.queue.shift();
       // Pass the slot straight to the next waiter without freeing it. Freeing
       // first (active--) left a gap before the waiter resumed in which a new
-      // run() could also take the slot, exceeding the limit (audit M9).
+      // run() could also take the slot, exceeding the limit (audit M9). If
+      // setLimit() lowered the limit below the running count, free the slot
+      // instead.
+      const next = this.active <= this.limit ? this.queue.shift() : undefined;
       if (next) next();
       else this.active--;
     }

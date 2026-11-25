@@ -29,6 +29,8 @@ toast-no-md-to-replace = No matching .md files to replace in selection
 toast-no-pdfs = No PDF attachments in selection
 toast-server-not-running = docling-serve isn't running — start it and retry
 toast-batch-failed = Batch failed: { $message }
+toast-batch-stopping = Stopping: no more PDFs will be sent. The ones docling-serve is already converting will still finish.
+batch-stopped-reason = Stopped before it started
 
 ## Auto-convert
 autoconvert-title = Docling auto-convert

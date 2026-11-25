@@ -9,14 +9,17 @@
 // Visibility logic + batch orchestration live here. The conversion of an
 // individual PDF lives in convert.ts.
 //
-// No cancel menu — docling-serve has no per-task cancel API (upstream issue
-// docling-project/docling-serve#447) and no client-disconnect handling
-// (#401), so a client-side abort would just hide a still-running conversion
-// from the user without saving any compute. See README "Known limitations".
+// No cancel for in-flight PDFs — docling-serve has no per-task cancel API
+// (upstream issue docling-project/docling-serve#447) and no client-disconnect
+// handling (#401), so a client-side abort would just hide a still-running
+// conversion from the user without saving any compute. See README "Known
+// limitations". The Tools menu's "Stop after the PDFs in progress" only
+// keeps a batch from sending PDFs it hasn't started yet, which does save
+// server work.
 
 import { getLocaleID, getString } from "../utils/locale";
 import {
-  convertAttachment,
+  convertOrSkip,
   applyStatusTagsToParents,
   preflightServer,
   type ConvertResult,
@@ -29,14 +32,24 @@ import {
 } from "./ui";
 import {
   getPDFAttachments,
-  getLocalFilePath,
   findMatchingMdChild,
+  sortLargestFirst,
 } from "../utils/zotero";
 import { getPref, setPref } from "../utils/prefs";
-import { busyMessage, releaseBatch, tryAcquireBatch } from "../utils/batchLock";
+import {
+  busyMessage,
+  hasUnstoppedConversion,
+  releaseBatch,
+  requestStopBatch,
+  tryAcquireBatch,
+} from "../utils/batchLock";
 import { notifyOnBatchComplete } from "../utils/notification";
-import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
-import { truncateMiddle, formatDuration } from "../utils/format";
+import { conversionQueue } from "../utils/conversionQueue";
+import {
+  effectiveConcurrency,
+  requestedConcurrency,
+} from "../utils/effectiveConcurrency";
+import { truncateMiddle, formatBatchDuration } from "../utils/format";
 import { onExportMarkdownZipClick } from "./markdownZipExport";
 import { onRemoveImagesClick, resolveMdTargets } from "./removeImages";
 
@@ -243,6 +256,16 @@ function confirmReconvertWithUser(count: number): boolean {
 }
 
 /**
+ * Tools-menu "Stop after the PDFs in progress": the running conversion batch
+ * sends no more PDFs; the ones docling-serve is already working on finish.
+ */
+function onStopBatchClick(): void {
+  if (requestStopBatch()) {
+    toast("Docling", getString("toast-batch-stopping"), true);
+  }
+}
+
+/**
  * Run convertAttachment over a resolved PDF list with parallel concurrency,
  * per-item progress, and aggregated status tags + toast.
  * `force` bypasses the skipIfExists guard and pre-deletes existing .md.
@@ -288,8 +311,9 @@ export async function runBatch(
     if (!confirmReconvertWithUser(pdfs.length)) return false;
   }
 
-  // Only one batch at a time (menu, auto-convert and Remove Images share
-  // the lock). Acquire is synchronous, so two rapid clicks can't both pass.
+  // One menu batch at a time, alongside auto-convert but never alongside
+  // Remove Images (see batchLock). Acquire is synchronous, so two rapid
+  // clicks can't both pass.
   if (!tryAcquireBatch("menu")) {
     toast("Docling", busyMessage(), false);
     return false;
@@ -297,6 +321,9 @@ export async function runBatch(
 
   const total = pdfs.length;
   let done = 0;
+  let running = 0;
+  let limit = 1;
+  let startedAt = 0;
   let ok = 0;
   let skipped = 0;
   let failed = 0;
@@ -317,27 +344,38 @@ export async function runBatch(
       return false;
     }
 
-    const limit = Math.max(
-      1,
-      Math.min(8, Number(getPref("maxConcurrency") ?? 1) || 1),
+    limit = effectiveConcurrency(
+      getPref("maxConcurrency"),
+      (getPref("useAsyncEndpoint") ?? false) as boolean,
     );
-    const limiter = new ConcurrencyLimiter(limit);
+    // The queue is shared with auto-convert, so the two together never run
+    // more than the setting allows.
+    conversionQueue.setLimit(limit);
 
     // Hide the noisy "concurrency=1" suffix when the user is on the default —
-    // only surface it when they've actually opted into parallelism.
-    const concurrencyNote = limit > 1 ? ` · concurrency=${limit}` : "";
+    // only surface it when they've actually opted into parallelism. Shows
+    // conversions at once, not the async prefetch on top.
+    const atOnce = Math.min(
+      limit,
+      requestedConcurrency(getPref("maxConcurrency")),
+    );
+    const concurrencyNote = atOnce > 1 ? ` · concurrency=${atOnce}` : "";
     startManagedProgress(
       `${opts.menuLabel}: converting…`,
       `${total} PDF${total === 1 ? "" : "s"}${concurrencyNote}`,
     );
 
-    // Update headline as each item completes — gives the user a live N-of-M
-    // counter even when items run in parallel. Best-effort: a UI hiccup must
-    // never abort the batch.
+    // Update headline as each item starts and completes — gives the user a
+    // live N-of-M counter. In parallel, the most recently started name alone
+    // reads as if only that PDF were converting, so show how many are
+    // running instead. Best-effort: a UI hiccup must never abort the batch.
     const refreshHeadline = (currentName?: string) => {
-      const label = currentName
-        ? `${opts.menuLabel}: (${done}/${total}) ${currentName}`
-        : `${opts.menuLabel}: (${done}/${total})`;
+      const label =
+        limit > 1 && running > 1
+          ? `${opts.menuLabel}: (${done}/${total}) · ${running} running`
+          : currentName
+            ? `${opts.menuLabel}: (${done}/${total}) ${currentName}`
+            : `${opts.menuLabel}: (${done}/${total})`;
       try {
         updateManagedHeadline(label);
       } catch {
@@ -347,21 +385,15 @@ export async function runBatch(
 
     const runOne = async (item: Zotero.Item): Promise<void> => {
       // Per-item progress: show this PDF's filename while it's working.
-      let displayName = "";
-      try {
-        const p = await getLocalFilePath(item);
-        if (p) displayName = truncateMiddle(PathUtils.filename(p), 40);
-      } catch {
-        /* best-effort */
-      }
+      // The stored filename is enough for a label; convertAttachment checks
+      // that the file exists.
+      const displayName = truncateMiddle(item.attachmentFilename ?? "", 40);
+      running++;
       refreshHeadline(displayName);
 
       let result: ConvertResult;
       try {
-        // Stop sending new PDFs once shutdown has begun (audit M7).
-        result = addon.data.alive
-          ? await convertAttachment(item, { force: opts.force })
-          : { status: "skipped", reason: "Plugin is shutting down" };
+        result = await convertOrSkip(item, "menu", opts.force);
       } catch (e) {
         result = { status: "error", message: (e as Error).message };
       }
@@ -376,21 +408,28 @@ export async function runBatch(
         failed++;
         failureMessages.push(result.message);
       }
+      running--;
       done++;
       refreshHeadline();
     };
 
+    // In parallel, start the biggest PDFs first so the batch doesn't end
+    // with one large PDF converting alone (see sortLargestFirst).
+    const ordered = limit > 1 ? await sortLargestFirst(pdfs) : pdfs;
+
     // allSettled, not all: the lock must stay held until EVERY item has
     // finished, even if one of them throws (audit M3).
+    startedAt = Date.now();
     await Promise.allSettled(
-      pdfs.map((item) => limiter.run(() => runOne(item))),
+      ordered.map((item) => conversionQueue.run(() => runOne(item))),
     );
-    await applyStatusTagsToParents(batchResults);
+    // No DB writes from a plugin that's being unloaded.
+    if (addon.data.alive) await applyStatusTagsToParents(batchResults);
   } catch (e) {
     unexpected = e as Error;
     log(`batch failed unexpectedly: ${unexpected.message}`);
   } finally {
-    releaseBatch();
+    releaseBatch("menu");
   }
 
   if (unexpected) {
@@ -413,15 +452,21 @@ export async function runBatch(
   }
 
   const allOk = failed === 0;
-  // Sum docling-serve's reported processing_time across OK items. With
-  // concurrency > 1 this is the SUM of work the server did, not the wall
-  // time the user waited — still the most honest number we have.
-  const totalSec = batchResults.reduce((acc, { result }) => {
+  // Elapsed time is what the user waited. docling-serve's processing_time
+  // summed across OK items is the work the server did; with concurrency > 1
+  // it can exceed the wait, so it is shown alongside.
+  const serverSec = batchResults.reduce((acc, { result }) => {
     if (result.status !== "ok") return acc;
     return acc + (result.processingTimeSec ?? 0);
   }, 0);
   const durationSuffix =
-    ok > 0 && totalSec > 0 ? ` — took ${formatDuration(totalSec)}` : "";
+    ok > 0
+      ? formatBatchDuration(
+          (Date.now() - startedAt) / 1000,
+          serverSec,
+          limit > 1,
+        )
+      : "";
   const summary = `OK ${ok} · skipped ${skipped} · failed ${failed}${durationSuffix}`;
   const body =
     failureMessages.length > 0
@@ -544,6 +589,14 @@ export function registerMenus(): void {
         menuType: "menuitem",
         l10nID: getLocaleID("menu-tools-remove-images"),
         onCommand: () => void onRemoveImagesClick("tools"),
+      },
+      {
+        // Only while a conversion batch is running.
+        menuType: "menuitem",
+        l10nID: getLocaleID("menu-tools-stop-batch"),
+        onShowing: (_e: Event, ctx: any) =>
+          ctx.setVisible(hasUnstoppedConversion()),
+        onCommand: () => onStopBatchClick(),
       },
     ],
   });

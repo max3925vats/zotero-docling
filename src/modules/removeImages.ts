@@ -29,8 +29,14 @@ import {
 } from "../utils/zotero";
 import { stripImagesFromMarkdown } from "../utils/stripImages";
 import { formatBytes } from "../utils/format";
+import { ConcurrencyLimiter } from "../utils/concurrencyLimiter";
 
 const LOG = "[Docling/removeImages]";
+
+// Files read and rewritten at once. IOUtils does the I/O off the main
+// thread, so a few at a time overlap; the cap bounds memory, since each
+// file is held twice (before and after) while it's processed.
+const IO_CONCURRENCY = 4;
 
 function log(...args: unknown[]): void {
   try {
@@ -142,6 +148,69 @@ function confirmRemoveImages(count: number): boolean {
   return pressed === 0;
 }
 
+export interface RewriteStats {
+  changed: number;
+  imagesReplaced: number;
+  bytesSaved: number;
+  untouched: number;
+  failed: number;
+}
+
+/**
+ * Strip images from each markdown attachment's file in place, a few files at
+ * a time. The caller holds the batch lock. Exported for tests.
+ */
+export async function stripImagesFromFiles(
+  targets: Zotero.Item[],
+): Promise<RewriteStats> {
+  let changed = 0;
+  let imagesReplaced = 0;
+  let bytesSaved = 0;
+  let untouched = 0;
+  let failed = 0;
+
+  const rewriteOne = async (md: Zotero.Item): Promise<void> => {
+    const path = await getLocalFilePath(md);
+    if (!path) {
+      log(`md ${md.id} has no local file (cloud-only?) — skipping`);
+      failed++;
+      return;
+    }
+    let before: string;
+    try {
+      before = await IOUtils.readUTF8(path);
+    } catch (e) {
+      log(`failed to read ${path}: ${(e as Error).message}`);
+      failed++;
+      return;
+    }
+    const { markdown: after, replaced } = stripImagesFromMarkdown(before);
+    if (replaced === 0) {
+      untouched++;
+      return;
+    }
+    try {
+      await IOUtils.writeUTF8(path, after);
+    } catch (e) {
+      log(`failed to write ${path}: ${(e as Error).message}`);
+      failed++;
+      return;
+    }
+    changed++;
+    imagesReplaced += replaced;
+    // Embedded images are base64 (ASCII), so UTF-16 code-unit length is a
+    // faithful byte estimate for the part we removed.
+    bytesSaved += Math.max(0, before.length - after.length);
+    log(`stripped ${replaced} image(s) from ${path}`);
+  };
+
+  const limiter = new ConcurrencyLimiter(IO_CONCURRENCY);
+  await Promise.allSettled(
+    targets.map((md) => limiter.run(() => rewriteOne(md))),
+  );
+  return { changed, imagesReplaced, bytesSaved, untouched, failed };
+}
+
 /**
  * Right-click and Tools-menu entry point. `source` is just for logging —
  * the logic is identical in both cases.
@@ -176,51 +245,14 @@ export async function onRemoveImagesClick(
     return;
   }
 
-  let changed = 0;
-  let imagesReplaced = 0;
-  let bytesSaved = 0;
-  let untouched = 0;
-  let failed = 0;
-
+  let stats: RewriteStats;
   try {
-    for (const md of targets) {
-      const path = await getLocalFilePath(md);
-      if (!path) {
-        log(`md ${md.id} has no local file (cloud-only?) — skipping`);
-        failed++;
-        continue;
-      }
-      let before: string;
-      try {
-        before = await IOUtils.readUTF8(path);
-      } catch (e) {
-        log(`failed to read ${path}: ${(e as Error).message}`);
-        failed++;
-        continue;
-      }
-      const { markdown: after, replaced } = stripImagesFromMarkdown(before);
-      if (replaced === 0) {
-        untouched++;
-        continue;
-      }
-      try {
-        await IOUtils.writeUTF8(path, after);
-      } catch (e) {
-        log(`failed to write ${path}: ${(e as Error).message}`);
-        failed++;
-        continue;
-      }
-      changed++;
-      imagesReplaced += replaced;
-      // Embedded images are base64 (ASCII), so UTF-16 code-unit length is a
-      // faithful byte estimate for the part we removed.
-      bytesSaved += Math.max(0, before.length - after.length);
-      log(`stripped ${replaced} image(s) from ${path}`);
-    }
+    stats = await stripImagesFromFiles(targets);
   } finally {
-    releaseBatch();
+    releaseBatch("remove-images");
   }
 
+  const { changed, imagesReplaced, bytesSaved, untouched, failed } = stats;
   const detailParts: string[] = [];
   if (untouched > 0) {
     detailParts.push(
