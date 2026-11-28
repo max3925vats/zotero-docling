@@ -2,9 +2,10 @@ import { assert } from "chai";
 import { config } from "../package.json";
 import {
   convertAttachment,
-  migrateUrlCredentials,
   setFetchOverrideForTests,
 } from "../src/modules/convert";
+import { migrateUrlCredentials } from "../src/modules/credentials";
+import { clearAllSecrets, getSecret, setSecret } from "../src/utils/secrets";
 import { buildFrontmatter } from "../src/utils/frontmatter";
 import { itemFactory } from "./_factories";
 import {
@@ -40,32 +41,33 @@ describe("polish (review follow-ups)", function () {
   describe("credentials in the server URL", function () {
     const KEYS = ["serverUrl", "authScheme", "authUsername", "authSecret"];
 
-    afterEach(function () {
+    afterEach(async function () {
       for (const k of KEYS) Zotero.Prefs.clear(`${PREFIX}.${k}`, true);
+      await clearAllSecrets();
     });
 
-    it("moves them into Basic auth settings once", function () {
+    it("moves them into Basic auth settings once", async function () {
       setPref("serverUrl", "http://ann:s%40cret@host:5001/docling");
       setPref("authScheme", "none");
 
-      migrateUrlCredentials();
+      await migrateUrlCredentials();
 
       assert.strictEqual(pref("serverUrl"), "http://host:5001/docling");
       assert.strictEqual(pref("authScheme"), "basic");
       assert.strictEqual(pref("authUsername"), "ann");
-      assert.strictEqual(pref("authSecret"), "s@cret");
+      assert.strictEqual(getSecret("docling-serve-auth"), "s@cret");
     });
 
-    it("leaves an existing auth setup alone and only strips the URL", function () {
+    it("leaves an existing auth setup alone and only strips the URL", async function () {
       setPref("serverUrl", "http://ann:pw@host:5001");
       setPref("authScheme", "bearer");
-      setPref("authSecret", "tok");
+      await setSecret("docling-serve-auth", "tok");
 
-      migrateUrlCredentials();
+      await migrateUrlCredentials();
 
       assert.strictEqual(pref("serverUrl"), "http://host:5001");
       assert.strictEqual(pref("authScheme"), "bearer");
-      assert.strictEqual(pref("authSecret"), "tok");
+      assert.strictEqual(getSecret("docling-serve-auth"), "tok");
     });
   });
 

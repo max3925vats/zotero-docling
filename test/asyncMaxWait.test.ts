@@ -1,5 +1,5 @@
 import { assert } from "chai";
-import { asyncMaxWaitMs } from "../src/modules/convert";
+import { asyncMaxWaitMs } from "../src/modules/transport";
 
 // History review: the async max wait was meant to allow "no limit" (README
 // on main, commit 4ba5ace), but the code always turned 0 into 240 min.

@@ -12,7 +12,6 @@ declare namespace _ZoteroTypes {
       "skipIfExists": boolean;
       "authScheme": string;
       "authUsername": string;
-      "authSecret": string;
       "authHeaderName": string;
       "pipeline": string;
       "doOcr": boolean;
@@ -28,6 +27,12 @@ declare namespace _ZoteroTypes {
       "pictureDescriptionPreset": string;
       "vlmPresetCustom": string;
       "pictureDescriptionPresetCustom": string;
+      "remotePicApiEnabled": boolean;
+      "remotePicApiProvider": string;
+      "remotePicApiUrl": string;
+      "remotePicApiModel": string;
+      "remotePicApiPrompt": string;
+      "remotePicApiTimeoutSec": number;
       "ocrLang": string;
       "advancedJson": string;
       "useAsyncEndpoint": boolean;

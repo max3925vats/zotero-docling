@@ -163,4 +163,36 @@ describe("buildConvertForm", function () {
       /advancedJson must be a JSON object/,
     );
   });
+
+  describe("remote picture API field", function () {
+    const remote = {
+      name: "picture_description_api" as const,
+      value: '{"url":"http://x/v1/chat/completions"}',
+    };
+
+    it("leaves the form unchanged when no remote field is passed", function () {
+      const f = buildConvertForm(bytes, "a.pdf", getApi());
+      assert.isNull(f.get("picture_description_api"));
+      assert.isNull(f.get("picture_description_custom_config"));
+    });
+
+    it("adds the field, forces description on and drops the preset", function () {
+      setPref("doPictureDescription", false);
+      setPref("pictureDescriptionPreset", "smolvlm");
+      const f = buildConvertForm(bytes, "a.pdf", getApi(), remote);
+      assert.strictEqual(f.get("picture_description_api"), remote.value);
+      assert.strictEqual(f.get("do_picture_description"), "true");
+      assert.isNull(f.get("picture_description_preset"));
+    });
+
+    it("lets Advanced JSON replace it, and never sends both fields", function () {
+      setPref(
+        "advancedJson",
+        JSON.stringify({ picture_description_custom_config: { a: 1 } }),
+      );
+      const f = buildConvertForm(bytes, "a.pdf", getApi(), remote);
+      assert.isNull(f.get("picture_description_api"));
+      assert.strictEqual(f.get("picture_description_custom_config"), '{"a":1}');
+    });
+  });
 });
