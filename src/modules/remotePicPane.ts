@@ -93,7 +93,13 @@ export function bindSecretField(
     cancelTimer();
     timer = setTimeout(flush, SAVE_DEBOUNCE_MS);
   });
-  input.addEventListener("change", flush);
+  // A "change" always means a committed edit, even with no "input" before it
+  // (autofill, or a value set by script), so mark it unsaved before flushing.
+  input.addEventListener("change", () => {
+    dirty = true;
+    unsaved = true;
+    flush();
+  });
   const unregister = registerSecretFlush(flush);
   const onClose = () => {
     flush();
