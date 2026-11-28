@@ -102,14 +102,21 @@ describe("secrets store", function () {
     assert.strictEqual(getSecret(OPENAI), "kept");
   });
 
+  // Forward removal in the shape the real store has: Firefox 140 has only the
+  // sync removeLogin(), newer Firefox (Zotero beta) only removeLoginAsync().
+  function realRemove(real: any) {
+    return typeof real.removeLoginAsync === "function"
+      ? { removeLoginAsync: (l: unknown) => real.removeLoginAsync(l) }
+      : { removeLogin: (l: unknown) => real.removeLogin(l) };
+  }
+
   it("a failed add restores the previous login and keeps the cache honest", async function () {
     await setSecret("docling-serve-auth", "old");
     const real = (globalThis as any).Services.logins;
     let adds = 0;
     setLoginManagerForTests({
       searchLoginsAsync: (q: unknown) => real.searchLoginsAsync(q),
-      // Sync removeLogin only, like real Firefox 140 (no removeLoginAsync).
-      removeLogin: (l: unknown) => real.removeLogin(l),
+      ...realRemove(real),
       addLoginAsync: (l: unknown) => {
         adds += 1;
         // Fail only the first add, so the restore (second add) can succeed.
@@ -132,7 +139,7 @@ describe("secrets store", function () {
     const real = (globalThis as any).Services.logins;
     setLoginManagerForTests({
       searchLoginsAsync: (q: unknown) => real.searchLoginsAsync(q),
-      removeLogin: (l: unknown) => real.removeLogin(l),
+      ...realRemove(real),
       addLoginAsync: () => {
         throw new Error("disk full");
       },
